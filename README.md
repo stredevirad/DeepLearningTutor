@@ -126,6 +126,9 @@ answer in English only, and agent mode needs Gemini.
   scaler and the one-hot encoder are fitted on the training rows only. When a dataset is too
   small for every class to appear in all three parts, the app falls back to 80 % training /
   20 % validation and says clearly that its number is a validation accuracy.
+- **Faster long epochs.** Image models run 32 batches per TensorFlow call (MNIST, 3 epochs:
+  30.4 s → 24.8 s in an interleaved comparison); tables keep one batch per call so the live
+  chart moves after every batch.
 - **Honest numbers.** Metrics are computed on the weights the model actually ends up with
   (early stopping restores the best epoch). The size of the test set is shown beside the
   accuracy, and small test sets get a note on how much one wrong prediction moves it.
@@ -141,7 +144,9 @@ answer in English only, and agent mode needs Gemini.
 
 ### Ask
 - **AI tutor chat** at three levels (beginner, intermediate, advanced). Code in answers is
-  shown as code blocks. You can attach images, PDFs and text files.
+  shown as code blocks. You can attach images, PDFs and text files. English answers from
+  Gemini are streamed: the first words appear while the rest is still being written (the
+  total time is the same). A question whose reply failed is marked as unanswered.
 - **Agent mode (Gemini function calling).** The tutor can call five tools and shows each
   call live: `run_experiment` (trains real models), `diagnose_training`,
   `compare_experiments`, `generate_code`, `explain_concept`. Every argument is validated.
@@ -149,6 +154,11 @@ answer in English only, and agent mode needs Gemini.
   passages (cosine similarity on embeddings, BM25 keyword search as the fallback).
 - **Document check (optional).** A second LLM call estimates how much of an answer the
   retrieved passages support. Treat it as a signal, not a proof.
+- **API usage panel.** The sidebar shows what this session's Gemini requests have cost:
+  requests, failed attempts, retries, cache hits, tokens and seconds.
+- **Careful with the API.** Identical reviews, fact-checks and embeddings are answered from
+  an in-memory cache; keys rotate on rate limits; retries back off with jitter; every
+  request has a time limit (120 s, 30 s for embeddings).
 
 ### Test & export
 - **Predictions.** Upload an image or try the bundled samples; for tables, fill in feature
@@ -168,14 +178,20 @@ then open **Advanced: remote training (MCP)** in the sidebar.
 
 ## Measured results
 
-Measured on 2026-11-12 with `python benchmarks/verify_models.py` on a laptop CPU
-(Intel Core Ultra 5 125H, no GPU), seed 42, Python 3.13.0, TensorFlow 2.20.0.
+Measured on 2026-11-12, at the end of the second pass, with
+`python benchmarks/verify_models.py` on a laptop CPU (Intel Core Ultra 5 125H, no GPU),
+seed 42, Python 3.13.0, TensorFlow 2.20.0.
 
 | Configuration | Validation accuracy | Test accuracy | Training time |
 |---|---:|---:|---:|
-| Iris, 2 × 16 dense, Adam lr 0.01, batch 16, 50 epochs (the defaults) | 100.0 % (22 rows) | **90.9 %** (22 rows) | 1.6 s |
-| MNIST, CNN 2 conv × 16 filters, Adam lr 0.001, batch 32, 3 epochs | 98.6 % (6,000) | **98.8 %** (10,000) | 39.6 s |
-| Fashion-MNIST, same CNN, 3 epochs | 91.1 % (6,000) | **89.6 %** (10,000) | 35.7 s |
+| Iris, 2 × 16 dense, Adam lr 0.01, batch 16, 50 epochs (the defaults) | 100.0 % (22 rows) | **90.9 %** (22 rows) | 1.5 s |
+| MNIST, CNN 2 conv × 16 filters, Adam lr 0.001, batch 32, 3 epochs | 98.4 % (6,000) | **98.7 %** (10,000) | 12.9 s |
+| Fashion-MNIST, same CNN, 3 epochs | 91.2 % (6,000) | **89.8 %** (10,000) | 13.2 s |
+
+The CNN times are single runs at the start of a fresh process, which is when this laptop is
+fastest; the same training took 22 – 31 s in longer sessions, and 39.6 s and 35.7 s when this
+table was first measured earlier the same day. Read them as "tens of seconds", and see
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) §7 for the controlled comparison.
 
 How to read this table:
 
@@ -189,15 +205,28 @@ How to read this table:
 Other checks from the same run:
 
 - The bundled `handwritten_seven.png` is predicted as 7; its Grad-CAM heat lies on the
-  stroke 3.1× more than chance.
+  stroke 3.8× more than chance.
 - Grad-CAM on 300 correctly classified MNIST validation digits: the heat lies on the digit's
-  pixels a median 2.3× more than chance; 4 of the 300 maps were empty.
+  pixels a median 2.7× more than chance; none of the 300 maps was empty.
 - `fashion_ankle_boot.png` is predicted as Ankle boot. `fashion_sneaker.png` is a line
-  drawing, unlike the photos the model was trained on, and is predicted as **Bag**.
+  drawing, unlike the photos the model was trained on; in this run it is predicted as
+  Sneaker with 63 % confidence (the run earlier the same day, before the batches were
+  grouped differently, said **Bag**), so that prediction is not stable.
 
-Speed of the user interface (for example 184 ms to react to a sidebar switch with a trained
-model) was measured earlier, on 2026-09-30 and 2026-10-01, and is documented in
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md). Those numbers were not re-measured for this release.
+Second pass, same day (details and method in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) §7):
+
+| What | Before | After |
+|---|---:|---:|
+| Memory for the vectors of 500 knowledge-base passages | 62.4 MB | 1.8 MB |
+| MNIST, 3 epochs, interleaved comparison in one process | 30.4 s | 24.8 s |
+| Wait before the first words of a tutor answer (3 real calls) | 5.6 – 13.2 s | 2.0 – 6.7 s (total time unchanged) |
+| First document upload (text splitting) | 534 ms | 141 ms |
+| Packages installed by `pip install -r requirements.txt` | 109 | 94 |
+
+Speed of the user interface in a real browser (for example 184 ms to react to a sidebar
+switch with a trained model) was measured earlier, on 2026-09-30 and 2026-10-01, and is
+documented in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) §1. Those browser numbers were not
+re-measured; the in-process timings were, and did not change (§7).
 
 ---
 
@@ -215,8 +244,8 @@ app.py                     Streamlit UI: sidebar + four lazy tabs (only the open
 │   ├── image_preprocessing.py   one preprocessing for training ZIPs and test uploads
 │   ├── gradcam.py         Grad-CAM that works under Keras 3
 │   ├── codegen.py         "equivalent Python code" generator
-│   └── rag.py             PDF/TXT extraction, chunking, cosine + BM25 retrieval
-├── backend/               Gemini (key rotation, retry, cache), agent loop, Ollama
+│   └── rag.py             PDF/TXT extraction, our own text splitter, cosine + BM25 retrieval
+├── backend/               Gemini (key rotation, retry, cache, time limit, streaming), usage meter, agent loop, Ollama
 ├── components/            live training callback, Altair charts, chat parsing and rendering
 ├── config/                translations (English + Malayalam), prompts, session-state defaults
 ├── agent_tools.py         the five tools the Gemini agent can call
@@ -224,6 +253,7 @@ app.py                     Streamlit UI: sidebar + four lazy tabs (only the open
 ├── mcp_server.py / mcp_client.py   optional remote training
 ├── benchmarks/            accuracy and speed scripts
 ├── scripts/demo_walk.py   browser walk through the app, makes the screenshots
+├── memory/roadmap.md      engineering log of the second pass: every item, commit and measurement
 └── tests/                 pytest suite
 ```
 
@@ -236,7 +266,7 @@ preprocessing, the seeding and the evaluation are the same code everywhere.
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest                 # 450 tests, 2–4 minutes on a laptop CPU
+python -m pytest                 # 478 tests, 2–4 minutes on a laptop CPU
 python -m pytest -m "not slow"   # quick subset (no model training)
 python -m pyflakes .
 ```
@@ -248,9 +278,10 @@ python -m pyflakes .
   the encoder are fitted on training rows only; the test split is evaluated exactly once
   and only after training; the per-class numbers match scikit-learn.
 - **Also covered:** malicious ZIPs, CSV analysis, reproducibility, Grad-CAM, image
-  preprocessing, chat parsing, LLM retry and key rotation, RAG, the agent loop and tools,
-  the remote-training server, the exported code, translations, and end-to-end runs of
-  every tab.
+  preprocessing, chat parsing, LLM retry, key rotation, time limits and streaming, the usage
+  meter, RAG and the text splitter, the agent loop and tools, the remote-training server,
+  the exported code (its rows are compared with the app's), translations, and end-to-end
+  runs of every tab.
 
 Reproduce the measurements:
 
@@ -271,9 +302,22 @@ python benchmarks/run_benchmarks.py --out results.json   # start-up, rerun and c
 - **Small test sets are noisy.** Iris has 22 test rows; one flower is 4.5 points. There is
   one split per seed and no cross-validation.
 - **Deliberately small models.** They train in seconds on a CPU; they are for teaching, not
-  for state-of-the-art accuracy. A CNN epoch on MNIST took about 13 s on the test laptop.
-- **Out-of-distribution images are guessed badly.** The bundled sneaker drawing is
-  predicted as a bag.
+  for state-of-the-art accuracy. A CNN epoch on MNIST took between 4 and 13 s on the test
+  laptop, depending on how warm it was.
+- **Out-of-distribution images are guessed badly.** The bundled sneaker drawing was
+  predicted as a bag in one run and as a sneaker (63 %) in the next.
+- **Small-sample checks.** The 768-number embeddings were compared with the full ones on one
+  short document (15 passages, 20 questions). The request time limit was tested with fakes,
+  not against a real hung connection.
+- **Known small defects, reproduced but not fixed** (listed in
+  [memory/roadmap.md](memory/roadmap.md), section F): a ZIP that stores the same file name
+  several times loads that image several times; a document cut off by the knowledge-base
+  size limit is remembered as already learned; two error-handling corner cases in the
+  Gemini layer.
+- **Streaming is for English Gemini answers only.** Agent mode, Malayalam answers (one JSON
+  object) and Ollama answers appear when complete.
+- **The exported script** makes the same split as the app but trains with plain
+  `model.fit`, so its weights are not bit-identical to the app's.
 - **The document check is an estimate.** An LLM judging another LLM can be wrong.
 - **gTTS needs internet access. Ollama models answer in English only.**
 - **One user per server.** Training runs inside the user's session; there are no accounts.
@@ -301,7 +345,11 @@ help of an AI coding assistant: the audit found, among other things, a data leak
 was fitted before the split) and a Grad-CAM that did not work under Keras 3; the refactor
 moved the logic out of the user interface into tested modules. In the private working
 repository that work is dated 2026-09-30 and 2026-10-01. The held-out test set and the
-per-class table were added for this release.
+per-class table were added for this release. A second pass on 2026-11-12 carried the test
+set through the exported script, the AI review, the tutor, the agent and the remote-training
+log, added the API usage meter, request time limits and streaming, fixed three bugs found
+by a time-boxed bug hunt, and made the measured optimisations listed above. Its engineering
+log is [memory/roadmap.md](memory/roadmap.md).
 
 The public history starts at this release, because the earlier working repository also
 held unrelated report material that cannot be published.

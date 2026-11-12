@@ -117,3 +117,64 @@ Before the change, every click paid for Streamlit's module scan and for re-drawi
   - Iris: 96.7 % in 1.6 s;
   - MNIST: 98.7 % in 19 s for 3 epochs;
   - Grad-CAM: a median 2.8× chance on digit pixels.
+
+## 7. Second pass, November 2026
+
+A second engineering pass on 2026-11-12, in small measured steps. The full log, with every
+decision and every number, is [memory/roadmap.md](../memory/roadmap.md). Everything below was
+measured in that pass on the same laptop (Intel Core Ultra 5 125H, CPU only, mains power).
+A change was kept only when it met a rule fixed in advance; what did not is listed too.
+
+### Kept
+
+| Change | Before | After | How it was measured |
+|---|---|---|---|
+| Embeddings stored as shared float32 arrays (500 passages) | 62.4 MB | 6.4 MB | `tracemalloc`, fake client returning Python lists as the SDK does; top-3 passages identical |
+| Embeddings with 768 numbers instead of 3,072 (500 passages) | 6.4 MB | 1.8 MB | same; on 20 fixed questions over the study guide the best passage was the same for 20 of 20, the top-3 in the same order for 16 of 20 (3 real embedding calls) |
+| Search matrix for 500 passages | 6.2 MB | 1.5 MB | same |
+| CNN training, MNIST, 3 epochs: several batches per TensorFlow call | 30.4 s | 24.8 s (18.5 % faster) | 5 interleaved repeats in one process, median; test accuracy 98.84 % → 98.71 % |
+| Wait before the first words of a tutor answer (streaming) | 5.6 – 13.2 s (the whole answer) | 2.0 – 6.7 s | 3 real calls, gemini-2.5-flash. **The total time is unchanged**; streaming only shows the words as they arrive |
+| First document upload: our own text splitter instead of a library | 534 ms | 141 ms | fresh process, median of 5; identical chunks on 1,232 test texts |
+| Packages pulled in by a fresh install | 109 | 94 | dependency closure of `requirements.txt` |
+| A Gemini request that hangs | no limit | 120 s (30 s for embeddings), retried once at most | verified with fakes that raise the timeout error; not measured against a real hung connection |
+| Fact-check when every key is rate-limited | 2 rounds of retries | 1 | test with a fake |
+
+New instrument: the sidebar panel **API usage (this session)** counts requests, failed
+attempts, retries, cache hits and misses, tokens (as reported by Gemini) and seconds.
+
+### Tried and not kept
+
+| Idea | Result | Decision |
+|---|---|---|
+| Fixed tutor instructions as `system_instruction` | 513 / 514 prompt tokens before, 514 / 515 after; 0 cached tokens either way. The prompt is about 500 tokens; implicit caching needs 2,048 | not adopted: one token more, no gain |
+| Larger evaluation batch for the CNN | 29.1 s → 29.9 s (3 repeats) | no gain |
+| Plain `model.fit` on NumPy arrays instead of the `tf.data` pipeline | 29.1 s → 30.3 s (3 repeats) | no gain |
+| `steps_per_execution` on the endless data stream | 16 % faster, but a new test showed that every epoch then trains on a few batches twice | replaced by the variant above, which ends the stream after one pass |
+| Removing matplotlib (used for one colormap) | 6 packages and about 125 ms | below the threshold, kept |
+
+### The slow-CNN question
+
+The first pass measured 39.6 s for 3 MNIST epochs where September had measured 19 s. The
+split is not the cause: with the old sizes (60,000 training images) the same code took
+33.3 s, with the new ones (54,000) 29.1 s, and the final evaluation of all three parts costs
+1.8 s. What moves the number is the state of the laptop. Within one session the same code
+took between 22.5 s and 31.0 s, and the first training of a fresh process is the fastest:
+`benchmarks/verify_models.py`, which trains MNIST once at the start of a process, took
+12.9 s at the end of this pass. So a single timing of CNN training on this laptop is good
+to about a factor of two; comparisons are only meaningful when the variants are interleaved
+in one process, as in the table above.
+
+### Unchanged user-interface timings (before → after this pass, `run_benchmarks.py`)
+
+| What | Start of the pass | End of the pass |
+|---|---|---|
+| Cold first run | 5,347 ms | 5,264 ms |
+| No-op rerun, nothing trained | 23.8 ms | 26.7 ms |
+| No-op rerun, Iris model trained | 29.8 ms | 28.7 ms |
+| Train click on Iris, 50 epochs | 3,139 ms | 2,984 ms |
+| Chat message round trip, instant fake LLM | 31.3 ms | 32.1 ms |
+| RAG keyword search, 500 passages, cached index | 0.27 ms | 0.28 ms |
+| Train click, CNN on a 6,000-image subset, 1 epoch | 2,159 ms | 2,042 ms |
+
+One run each; the differences are within run-to-run variation. Nothing in this table was
+a target of the pass, and nothing got measurably slower.

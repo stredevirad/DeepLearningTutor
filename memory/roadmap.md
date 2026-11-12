@@ -119,9 +119,9 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | CI VERIFIED | 9e7fdb8 | green |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | REVERTED | 1659a77 | green |
 | 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | CI VERIFIED | 191899a | green |
-| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | DONE | 6e7a73c | running when checked |
-| 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | DONE | see git log | pending |
-| 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | NOT STARTED | | |
+| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | CI VERIFIED | 6e7a73c | green |
+| 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | CI VERIFIED | d7ce525 | green |
+| 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | DONE | see git log | pending |
 | 7.2 | MUST | S | Private guide and run summary (outside the repo) | NOT STARTED | | |
 
 Item details (short form of the brief; the acceptance rules are binding):
@@ -355,6 +355,42 @@ Item details (short form of the brief; the acceptance rules are binding):
   (benchmark group "startup": server healthy after 1.35 s, first page after 5.37 s).
   Outside the repo: the run folder was 547 MB (pip cache 524 MB, old clone check 7 MB, temp
   10 MB); those three were deleted, leaving 7 MB of logs, scripts and result files.
+- 7.1 (final proof), 2026-11-12, mains power.
+  run_benchmarks.py at the start of the pass (8025149) against the end (d7ce525 + docs):
+
+  | What | Start | End |
+  |------|-------|-----|
+  | Cold first run | 5,347 ms | 5,264 ms |
+  | of which import tensorflow | 4,361 ms | 4,176 ms |
+  | No-op rerun, nothing trained | 23.8 ms | 26.7 ms |
+  | No-op rerun, Iris model trained | 29.8 ms | 28.7 ms |
+  | Train click on Iris, 50 epochs | 3,139 ms | 2,984 ms |
+  | Chat message round trip, fake LLM | 31.3 ms | 32.1 ms |
+  | RAG keyword search, 500 chunks, per query / cached index | 22.0 / 0.27 ms | 21.7 / 0.28 ms |
+  | RAG cosine search, 500 x 3,072, per query / cached index | 38.5 / 0.46 ms | 36.2 / 0.62 ms |
+  | Train click, CNN on 6,000 MNIST images, 1 epoch | 2,159 ms | 2,042 ms |
+  | MCP: Iris 30 epochs round trip | 6,255 ms | 6,261 ms |
+
+  One run each: differences are within run-to-run variation; nothing got measurably slower.
+  (The cosine benchmark builds its own 3,072-number test vectors; it does not show the 768
+  change. The 6,000-image CNN benchmark has 188 batches per epoch, below the 320 needed for
+  steps_per_execution, so it is unaffected by 5.1 as intended.)
+  verify_models.py at the end of the pass: Iris 50 epochs validation 100.0 % / test 90.9 %
+  (22 rows each), 1.5 s. MNIST 3 epochs validation 98.42 % / test 98.71 %, 12.9 s.
+  Fashion-MNIST 3 epochs validation 91.17 % / test 89.84 %, 13.2 s. Handwritten 7 predicted
+  as 7, Grad-CAM heat on the stroke 3.81x chance; 300 MNIST digits: median 2.69x chance, 0
+  empty maps. Ankle boot predicted correctly; the sneaker drawing is now predicted as Sneaker
+  (63 %), where the first-pass run said Bag: an unstable out-of-distribution prediction. All
+  five checks of the script pass.
+  The 12.9 s for MNIST, against 24.8 s in the 5.1 comparison and 39.6 s in the first pass,
+  is the same code on the same laptop: a single training at the start of a fresh process is
+  the fastest case. Recorded as such in the README and docs/PERFORMANCE.md section 7.
+  Browser walk (scripts/demo_walk.py, real Chromium, one real tutor call): no Streamlit error
+  on any screen. Screenshots compared pixel by pixel with the committed ones: result card
+  0.01 %, charts 0.06 %, Malayalam 0.04 % of pixels differ (left as they are); Grad-CAM
+  2.0 % and tutor 2.0 % differ (new model weights, new answer text): those two were refreshed.
+  Fresh clone into the run folder: 478 passed in 102 s at d7ce525 (the last code commit), pyflakes silent.
+  Files: README.md, docs/PERFORMANCE.md, docs/images/gradcam.png, docs/images/tutor.png.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -424,13 +460,14 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## K. Real Gemini calls used
 
-10 of 12.
+11 of 12.
 
 - 3.3: 3 embedding calls (study-guide passages at 3,072; 20 questions at 3,072; 20 questions at
   768). All succeeded at the first attempt.
 - 3.4: 4 generate calls (two questions in the old prompt structure, two in the new). All
   succeeded at the first attempt.
 - 3.5: 3 streamed generate calls. All succeeded at the first attempt.
+- 7.1: 1 streamed generate call (the tutor question of the browser walk). Succeeded.
 
 ## L. Known issues
 
@@ -446,8 +483,6 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 7.1: write the 6.2 commit hash and its CI result into table G. Full tests and
-pyflakes; re-run benchmarks/run_benchmarks.py (compare with section D) and
-benchmarks/verify_models.py; add "Second pass, November 2026" to docs/PERFORMANCE.md; update
-the README; run scripts/demo_walk.py once (the UI changed: usage panel, streaming, captions)
-and refresh only the screenshots that differ; fresh clone in the run folder and tests there.
+Item 7.2 is outside the repository (the private guide, its HTML and the run summary) and
+leaves no commit here. After it, the pass is finished: write the 7.1 commit hash and its CI
+result into table G in a last roadmap-only commit, and mark 7.2 DONE there.
