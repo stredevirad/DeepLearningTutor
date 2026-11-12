@@ -10,6 +10,10 @@ Design notes:
   * Errors are classified: quota (429) -> rotate key / back off, transient
     (5xx, timeouts) -> back off and retry, everything else (bad key, bad
     request, unknown model) -> fail fast with a friendly LLMError.
+  * Every request has a time limit (GENERATE_TIMEOUT_SECONDS / EMBED_TIMEOUT_SECONDS).
+    A request that runs into it is retried once at most, so a hung connection
+    cannot block a click for long. The SDK's own retries are switched off
+    (one attempt per call): call_with_retry is the only retry loop.
   * Identical cacheable requests (training narrative, fact-checks, embeddings)
     are served from an in-memory cache instead of calling the API again.
 """
@@ -73,6 +77,17 @@ KEY_COOLDOWN_SECONDS = 60
 MAX_BACKOFF_SECONDS = 16
 MAX_WAIT_FOR_RETRY_AFTER = 20
 EMBED_BATCH_SIZE = 100
+# Time limits per request. The SDK takes milliseconds (types.HttpOptions.timeout).
+GENERATE_TIMEOUT_SECONDS = 120     # an answer with extended thinking can take a while
+EMBED_TIMEOUT_SECONDS = 30         # embedding a batch is quick; fail early if it is not
+MAX_TIMEOUT_RETRIES = 1            # a request that timed out is tried once more, then we give up
+
+
+def http_options(timeout_seconds):
+    """Time limit for a request, with the SDK's own retry loop switched off (attempts=1 = no retry),
+    so that its retries and call_with_retry's can never multiply."""
+    return types.HttpOptions(timeout=int(timeout_seconds * 1000),
+                             retry_options=types.HttpRetryOptions(attempts=1))
 
 
 class LLMError(RuntimeError):
@@ -156,7 +171,7 @@ def get_client():
     key = API_KEYS[idx]
     with _clients_lock:
         if key not in _clients:
-            _clients[key] = genai.Client(api_key=key)
+            _clients[key] = genai.Client(api_key=key, http_options=http_options(GENERATE_TIMEOUT_SECONDS))
         return _clients[key]
 
 
@@ -188,6 +203,11 @@ def is_configured():
 _QUOTA_WORDS = ("429", "quota", "resource_exhausted", "resource exhausted", "rate limit")
 _TRANSIENT_WORDS = ("503", "500", "502", "504", "unavailable", "overloaded", "deadline", "timed out", "timeout",
                     "internal error", "connection reset")
+
+
+def is_timeout(exc):
+    """The request ran into its time limit (httpx.ReadTimeout and friends, or a built-in TimeoutError)."""
+    return isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower()
 
 
 def classify_error(exc):
@@ -228,6 +248,8 @@ def friendly_error(exc):
     if code == 400 or "invalid argument" in msg:
         return "Gemini rejected the request (it may be too long or contain an unsupported file)."
     kind = classify_error(exc)
+    if is_timeout(exc):
+        return "Gemini took too long to answer, so the request was stopped. Please try again."
     if kind == "quota":
         return "Gemini's rate limit was reached. Please wait about a minute and try again."
     if kind == "transient":
@@ -266,6 +288,7 @@ def call_with_retry(func, *args, max_attempts=None, base_delay=1.0, sleep=time.s
         raise LLMUnavailableError("No Gemini API key is configured. Add GEMINI_API_KEYS to your .env file.")
     attempts = max_attempts or max(3, min(len(API_KEYS) + 2, 6))
     last_exc = None
+    timeouts = 0
     for attempt in range(attempts):
         if attempt:
             usage.record_retry()
@@ -282,6 +305,10 @@ def call_with_retry(func, *args, max_attempts=None, base_delay=1.0, sleep=time.s
                 raise LLMError(friendly_error(e)) from e
             if attempt == attempts - 1:
                 break
+            if is_timeout(e):
+                timeouts += 1
+                if timeouts > MAX_TIMEOUT_RETRIES:      # do not wait for the time limit again and again
+                    break
 
             delay = min(MAX_BACKOFF_SECONDS, base_delay * (2 ** attempt)) * (0.5 + random.random() / 2)
             if kind == "quota":
@@ -418,7 +445,9 @@ def embed_texts(texts, task_type="RETRIEVAL_DOCUMENT", **retry_kwargs):
 
         def _call():
             return get_client().models.embed_content(
-                model=EMBEDDING_MODEL, contents=batch, config=types.EmbedContentConfig(task_type=task_type))
+                model=EMBEDDING_MODEL, contents=batch,
+                config=types.EmbedContentConfig(task_type=task_type,
+                                                http_options=http_options(EMBED_TIMEOUT_SECONDS)))
         result = call_with_retry(_call, usage_kind="embed", **retry_kwargs)
         vectors = [list(e.values) for e in (result.embeddings or [])]
         if len(vectors) != len(batch):

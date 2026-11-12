@@ -124,6 +124,56 @@ def test_transient_timeouts_are_retried(keys):
     assert L.call_with_retry(Flaky(TimeoutError("read timed out")), sleep=lambda s: None) == "ok"
 
 
+# ─────────────────────────── request time limit ───────────────────────────
+
+def test_client_is_built_with_a_time_limit_and_no_sdk_retries(keys, monkeypatch):
+    made = []
+    monkeypatch.setattr(L, "_clients", {})
+    monkeypatch.setattr(L.genai, "Client", lambda **kw: made.append(kw) or SimpleNamespace(models=None))
+    L.get_client()
+    L.get_client()                                              # cached per key: built once
+    assert len(made) == 1 and made[0]["api_key"] == "k1"
+    options = made[0]["http_options"]
+    assert options.timeout == L.GENERATE_TIMEOUT_SECONDS * 1000        # the SDK takes milliseconds
+    assert options.retry_options.attempts == 1                         # the SDK itself never retries
+    assert L.EMBED_TIMEOUT_SECONDS < L.GENERATE_TIMEOUT_SECONDS
+
+
+def test_embedding_requests_carry_the_shorter_time_limit(keys, monkeypatch):
+    seen = []
+
+    def embed_content(model, contents, config=None):
+        seen.append(config)
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=[1.0]) for _ in contents])
+    monkeypatch.setattr(L, "get_client", lambda: SimpleNamespace(models=SimpleNamespace(embed_content=embed_content)))
+    L.embed_texts(["a"])
+    assert seen[0].http_options.timeout == L.EMBED_TIMEOUT_SECONDS * 1000
+    assert seen[0].http_options.retry_options.attempts == 1 and seen[0].task_type == "RETRIEVAL_DOCUMENT"
+
+
+def test_a_timeout_is_transient_and_retried_once_only(keys):
+    import httpx
+    assert L.classify_error(httpx.ReadTimeout("The read operation timed out")) == "transient"
+    assert L.is_timeout(httpx.ConnectTimeout("x")) and L.is_timeout(TimeoutError()) and not L.is_timeout(ValueError())
+
+    once = Flaky(httpx.ReadTimeout("The read operation timed out"))
+    assert L.call_with_retry(once, sleep=lambda s: None) == "ok"       # one timeout: tried again
+
+    hung = Flaky(*[httpx.ReadTimeout("The read operation timed out") for _ in range(6)])
+    with pytest.raises(L.LLMError, match="took too long"):
+        L.call_with_retry(hung, sleep=lambda s: None)
+    assert len(hung.keys_seen) == 1 + L.MAX_TIMEOUT_RETRIES             # 2 attempts, not the 5 a 3-key setup allows
+    u = U.snapshot()
+    assert u["failed"] == 3 and u["retries"] == 2                       # 1 + 2 failed attempts in this test
+
+
+def test_other_transient_errors_still_get_every_attempt(keys):
+    busy = Flaky(*[server_error() for _ in range(9)])
+    with pytest.raises(L.LLMError):
+        L.call_with_retry(busy, sleep=lambda s: None)
+    assert len(busy.keys_seen) == 5                                     # max(3, min(3 keys + 2, 6))
+
+
 def test_no_keys_configured(monkeypatch):
     monkeypatch.setattr(L, "API_KEYS", [])
     with pytest.raises(L.LLMUnavailableError, match="No Gemini API key"):

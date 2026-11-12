@@ -99,8 +99,8 @@ Empty until item 4.1.
 | 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | CI VERIFIED | f4f2c03 | green |
 | 2.1 | MUST | M | Exported script uses the app's three-way split | CI VERIFIED | 3fecf64 | green |
 | 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | CI VERIFIED | d866512 | green |
-| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | DONE | see git log | pending |
-| 3.2 | MUST | S | Request timeout on the Gemini client | NOT STARTED | | |
+| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | DONE | e6f67b0 | running when checked |
+| 3.2 | MUST | S | Request timeout on the Gemini client | DONE | see git log | pending |
 | 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | NOT STARTED | | |
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | NOT STARTED | | |
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | NOT STARTED | | |
@@ -200,6 +200,15 @@ Item details (short form of the brief; the acceptance rules are binding):
   at the end of each run so it includes that run's calls. Files: backend/usage.py (new),
   backend/llm_api.py, app.py, config/translations.py, tests (llm_api, app smoke, conftest).
   Tests: 453 -> 458. No real Gemini call was used.
+- 3.2 (request timeout). Before: no time limit; a hung connection could block a click without
+  limit. After: 120 s per generation request and 30 s per embedding request
+  (types.HttpOptions(timeout=<milliseconds>), confirmed in the google-genai docs; client-level
+  for generation, per-request config for embeddings). A request that times out is retried once
+  at most, so the worst case for one hung generation call is about 2 x 120 s plus one back-off
+  instead of unbounded. The SDK's own retry loop is set to one attempt
+  (HttpRetryOptions(attempts=1)) so it cannot multiply with call_with_retry. Not measured
+  against a real hung connection: verified with fakes that raise httpx.ReadTimeout. Files:
+  backend/llm_api.py, tests/test_llm_api.py. Tests: 458 -> 462.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -249,6 +258,13 @@ Item details (short form of the brief; the acceptance rules are binding):
 - 3.1: the meter is per browser session (st.session_state), with a module-level fallback
   outside Streamlit, the same arrangement as llm_api._state. Ollama requests are not counted.
 - 3.1: no reset button was added to the sidebar: one more control for no user need.
+- 3.2: the docs list the SDK's retry defaults (5 attempts; 408, 429, 5xx) but do not say
+  clearly whether they apply when no retry options are given. Cautious choice: set
+  attempts=1 explicitly, which is documented as "total attempts including the initial call".
+- 3.2: 120 s for generation because an answer with an extended thinking budget can be slow;
+  30 s for embeddings. These are judgement values, not measured ones.
+- 3.2: added MAX_TIMEOUT_RETRIES = 1 (not in the brief): without it a hung service would cost
+  attempts x 120 s. Other transient errors (5xx) keep all their attempts.
 
 ## K. Real Gemini calls used
 
@@ -262,7 +278,7 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 3.2: write the 3.1 commit hash and its CI result into table G. The docs already
-confirm HttpOptions(timeout=<milliseconds>) on genai.Client. Still to confirm: whether the SDK
-retries on its own by default. Then add the two timeout constants, make sure a timeout is
-classified transient, and test with a fake that raises the timeout error.
+Start item 4.1: write the 3.2 commit hash and its CI result into table G. Read
+backend/llm_api.py, backend/agent.py, agent_tools.py, core/rag.py, components/chat_helpers.py
+and the ZIP loader in core/data.py; list at most eight hypotheses in section F; failing test
+first; at most three fixes, one commit each (4.1a, 4.1b, 4.1c).
