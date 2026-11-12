@@ -72,6 +72,7 @@ class FakeGemini:
         self.prompts = []
         self.text_prompts = []
         self.fail_with = None                    # set to an exception to make the next chat calls fail
+        self.streamed = 0                        # how many answers were asked for as a stream
 
     def generate(self, contents, model_id=None, config=None, **kw):
         self.prompts.append((contents, config))
@@ -83,6 +84,14 @@ class FakeGemini:
             return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role="model", parts=parts))])
         return types.GenerateContentResponse(candidates=[types.Candidate(
             content=types.Content(role="model", parts=[types.Part(text=self.reply)]))])
+
+    def generate_stream(self, contents, model_id=None, config=None, **kw):
+        """The plain English tutor answer is streamed: the same reply, in pieces."""
+        self.prompts.append((contents, config))
+        self.streamed += 1
+        if self.fail_with is not None:
+            raise self.fail_with
+        return iter([self.reply[i:i + 20] for i in range(0, len(self.reply), 20)])
 
     def generate_text(self, prompt, model_id=None, json_mode=False, **kw):
         self.text_prompts.append(prompt)
@@ -104,6 +113,7 @@ def gemini(monkeypatch):
     fake = FakeGemini()
     monkeypatch.setattr(llm_api, "API_KEYS", ["test-key"])
     monkeypatch.setattr(llm_api, "generate", fake.generate)
+    monkeypatch.setattr(llm_api, "generate_stream", fake.generate_stream)
     monkeypatch.setattr(llm_api, "generate_text", fake.generate_text)
     monkeypatch.setattr(llm_api, "embed_texts", fake.embed_texts)
     return fake
@@ -429,6 +439,8 @@ def test_review_is_on_demand_and_chat_renders_code(gemini):
     no_errors(at)
     assert any("# 1. Load the dataset" in c.value for c in at.code)   # rendered as code, not an H1
     assert not any("# 1. Load the dataset" in m.value for m in at.markdown)
+    assert gemini.streamed == 1                               # the English answer arrived as a stream ...
+    assert at.session_state["chat_messages"][-1]["content"]["en"] == gemini.reply     # ... and is stored whole
 
 
 def test_quick_action_opens_the_tutor_and_asks(gemini):
@@ -487,6 +499,7 @@ def test_tutor_malayalam_bilingual_reply(gemini):
     assert "ഡ്രോപ്പ്ഔട്ട് സഹായിക്കുന്നു." in texts(at.markdown)
     _, config = gemini.prompts[-1]
     assert config.response_mime_type == "application/json"      # bilingual JSON requested in ml mode
+    assert gemini.streamed == 0                                 # half a JSON object cannot be shown: not streamed
 
 
 def test_agent_mode_runs_tools(gemini):

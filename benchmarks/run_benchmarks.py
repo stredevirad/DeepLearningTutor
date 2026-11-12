@@ -191,9 +191,10 @@ def _fake_llm():
         return types.GenerateContentResponse(candidates=[types.Candidate(
             content=types.Content(role="model", parts=[types.Part(text="Dropout randomly disables neurons.")]))])
 
-    saved = {name: getattr(llm_api, name) for name in ("generate", "generate_text", "embed_texts")}
+    saved = {name: getattr(llm_api, name) for name in ("generate", "generate_stream", "generate_text", "embed_texts")}
     llm_api.API_KEYS[:] = ["bench-key"]
     llm_api.generate = generate
+    llm_api.generate_stream = lambda contents, **kw: iter(["Dropout randomly ", "disables neurons."])
     llm_api.generate_text = lambda prompt, **kw: "**Solid result.** Try 50 epochs."
     llm_api.embed_texts = lambda texts, task_type=None, **kw: [[1.0, float(len(t) % 7)] for t in texts]
 

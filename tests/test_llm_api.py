@@ -254,6 +254,77 @@ def test_embed_texts_batches_and_caches(fake_client, monkeypatch):
     assert fake_client.embed_calls[-1][2] == "RETRIEVAL_QUERY"      # different task type -> new call
 
 
+# ─────────────────────────── streaming ───────────────────────────
+
+class StreamingModels:
+    """generate_content_stream fake: each call takes the next script from `scripts`.
+    A script is a list of chunks; an exception in it is raised when that position is reached."""
+
+    def __init__(self, *scripts):
+        self.scripts = list(scripts)
+        self.opened = 0
+
+    def generate_content_stream(self, model, contents, config=None):
+        self.opened += 1
+        script = self.scripts.pop(0)
+
+        def chunks():
+            for item in script:
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        return chunks()
+
+
+def _chunk(text, **usage_fields):
+    meta = SimpleNamespace(prompt_token_count=None, candidates_token_count=None, thoughts_token_count=None,
+                           cached_content_token_count=None)
+    for name, value in usage_fields.items():
+        setattr(meta, name, value)
+    return SimpleNamespace(text=text, usage_metadata=meta if usage_fields else None)
+
+
+def _streaming(monkeypatch, *scripts):
+    models = StreamingModels(*scripts)
+    monkeypatch.setattr(L, "get_client", lambda: SimpleNamespace(models=models))
+    return models
+
+
+def test_stream_yields_the_pieces_and_counts_tokens_from_the_last_chunk(keys, monkeypatch):
+    models = _streaming(monkeypatch, [_chunk("Drop"), _chunk(None), _chunk("out "), _chunk(
+        "works.", prompt_token_count=500, candidates_token_count=40, thoughts_token_count=90)])
+    assert list(L.generate_stream("what is dropout?")) == ["Drop", "out ", "works."]
+    u = U.snapshot()
+    assert models.opened == 1 and (u["calls"], u["failed"], u["retries"]) == (1, 0, 0)
+    assert (u["prompt_tokens"], u["output_tokens"], u["thinking_tokens"]) == (500, 40, 90)
+
+
+def test_stream_retries_only_before_the_first_piece(keys, monkeypatch):
+    models = _streaming(monkeypatch, [server_error()], [_chunk("Hello "), _chunk("there")])
+    stream = L.generate_stream("hi", sleep=lambda s: None)        # the failed opening is retried in here
+    assert models.opened == 2
+    assert "".join(stream) == "Hello there"
+    u = U.snapshot()
+    assert (u["calls"], u["failed"], u["retries"]) == (2, 1, 1)
+
+
+def test_stream_error_in_the_middle_is_not_retried(keys, monkeypatch):
+    models = _streaming(monkeypatch, [_chunk("The answer is "), server_error()], [_chunk("never asked for")])
+    stream = L.generate_stream("hi", sleep=lambda s: None)
+    assert next(stream) == "The answer is "
+    with pytest.raises(L.LLMError, match="temporarily unavailable"):
+        next(stream)
+    assert models.opened == 1                                      # no second request after text was shown
+
+
+def test_stream_that_cannot_be_opened_raises_like_generate(keys, monkeypatch):
+    _streaming(monkeypatch, [client_error(400, "bad request")])
+    with pytest.raises(L.LLMError, match="rejected the request"):
+        L.generate_stream("hi", sleep=lambda s: None)
+    empty = _streaming(monkeypatch, [])
+    assert list(L.generate_stream("hi")) == [] and empty.opened == 1   # an empty stream is an empty answer
+
+
 # ─────────────────────────── usage meter ───────────────────────────
 
 def _with_usage(text="ok", prompt=120, output=30, thoughts=None, cached=None):

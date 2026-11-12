@@ -1074,24 +1074,41 @@ def answer(prompt, attachments, chat_container):
                     if not json_data["en"].startswith("⚠️"):
                         check(json_data.get("en", ""))
             else:
-                with st.spinner(T("thinking")):
-                    try:
-                        model_id = llm_api.current_model_id()
-                        budget = llm_api.thinking_budget(ss.get("thinking_level_select"), model_id)
-                        config = llm_api.build_config(json_mode=(l == "ml"), thinking_budget=budget)
-                        contents = [llm_api.types.Content(role="user", parts=build_user_parts(full_prompt, images))]
-                        raw = (llm_api.generate(contents, config=config).text or "").strip()
-                        if not raw:
-                            st.warning(T("empty_reply"))
-                        else:
-                            json_data = parse_bilingual(raw)
-                            save_and_render(json_data)
-                            check(json_data.get("en", ""))
-                    except llm_api.LLMError as e:
-                        st.error(str(e))
-                    except Exception:
-                        logger.exception("Gemini chat failed")
-                        st.error(T("gemini_failed"))
+                try:
+                    model_id = llm_api.current_model_id()
+                    budget = llm_api.thinking_budget(ss.get("thinking_level_select"), model_id)
+                    config = llm_api.build_config(json_mode=(l == "ml"), thinking_budget=budget)
+                    contents = [llm_api.types.Content(role="user", parts=build_user_parts(full_prompt, images))]
+                    if l == "en":
+                        # Plain English answer: show the words as they arrive. The Malayalam answer is
+                        # one JSON object (both languages), which is only readable once it is complete.
+                        with st.spinner(T("thinking")):            # until the first words arrive
+                            stream = llm_api.generate_stream(contents, config=config)
+                        collected = []
+
+                        def typed():
+                            for piece in stream:
+                                collected.append(piece)
+                                yield piece
+                        live = st.empty()
+                        with live.container():
+                            st.write_stream(typed())
+                        live.empty()        # replaced below by the final rendering (code blocks, saved in history)
+                        raw = "".join(collected).strip()
+                    else:
+                        with st.spinner(T("thinking")):
+                            raw = (llm_api.generate(contents, config=config).text or "").strip()
+                    if not raw:
+                        st.warning(T("empty_reply"))
+                    else:
+                        json_data = parse_bilingual(raw)
+                        save_and_render(json_data)
+                        check(json_data.get("en", ""))
+                except llm_api.LLMError as e:
+                    st.error(str(e))
+                except Exception:
+                    logger.exception("Gemini chat failed")
+                    st.error(T("gemini_failed"))
 
     if ss.chat_messages and ss.chat_messages[-1] is entry:
         entry["unanswered"] = True              # no reply was stored: the request failed or came back empty

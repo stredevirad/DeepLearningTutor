@@ -77,6 +77,15 @@ def record_call(kind, seconds, response=None, ok=True):
         totals[name] += value
 
 
+def record_stream_end(seconds, last_chunk=None):
+    """A streamed answer has finished: add the time spent reading it and the token counts,
+    which Gemini sends with the last chunk. The call itself was counted when the stream opened."""
+    totals = _totals()
+    totals["seconds"] += max(0.0, float(seconds))
+    for name, value in read_tokens(last_chunk).items():
+        totals[name] += value
+
+
 def record_retry():
     """A failed attempt is about to be tried again."""
     _totals()["retries"] += 1

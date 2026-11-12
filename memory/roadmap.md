@@ -116,9 +116,9 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 3.2 | MUST | S | Request timeout on the Gemini client | CI VERIFIED | d2bc89e | green |
 | 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | CI VERIFIED | 4.1a 0caebba; 4.1b d77ecda; 4.1c 5cd2d77 | green (all three) |
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | CI VERIFIED | 0d9fd7f | green |
-| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | DONE | 9e7fdb8 | running when checked |
-| 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | REVERTED | see git log (roadmap only) | pending |
-| 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | NOT STARTED | | |
+| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | CI VERIFIED | 9e7fdb8 | green |
+| 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | REVERTED | 1659a77 | green |
+| 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | DONE | see git log | pending |
 | 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | NOT STARTED | | |
 | 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | NOT STARTED | | |
 | 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | NOT STARTED | | |
@@ -300,6 +300,24 @@ Item details (short form of the brief; the acceptance rules are binding):
   the run folder). The seconds differ by less than normal network variation and prove nothing.
   The user message was already ordered stable-first (instructions, knowledge base, history,
   status, question).
+- 3.5 (streaming the plain English tutor answer), 3 real calls on gemini-2.5-flash, the
+  tutor's Intermediate prompt, no model trained:
+
+  | Question | First text after | Whole answer after | Answer | Output + thinking tokens |
+  |----------|------------------|--------------------|--------|--------------------------|
+  | overfitting and three ways to reduce it | 6.7 s | 13.2 s | 6,080 characters | 1,454 + 1,025 |
+  | how a convolutional layer works | 3.1 s | 9.6 s | 5,310 characters | 1,473 + 385 |
+  | validation against test sets | 2.0 s | 5.6 s | 3,440 characters | 708 + 206 |
+
+  What streaming changes: the reader sees the first words after 2.0 - 6.7 s instead of
+  waiting 5.6 - 13.2 s behind a spinner. What it does not change: the total time. The whole
+  answer takes as long as before (no blocking call was made for comparison; streaming has no
+  mechanism that would shorten it). The wait before the first text is mostly the model
+  thinking (the slowest start had the most thinking tokens). Retries and key rotation apply
+  only until the first piece arrives; an error after that is shown, not retried. Not streamed:
+  agent mode, the Malayalam answer (one JSON object), Ollama, the AI review, the fact-check.
+  Files: backend/llm_api.py (generate_stream), backend/usage.py, app.py,
+  benchmarks/run_benchmarks.py (fake), tests (llm_api, app smoke). Tests: 469 -> 473.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -366,12 +384,13 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## K. Real Gemini calls used
 
-7 of 12.
+10 of 12.
 
 - 3.3: 3 embedding calls (study-guide passages at 3,072; 20 questions at 3,072; 20 questions at
   768). All succeeded at the first attempt.
 - 3.4: 4 generate calls (two questions in the old prompt structure, two in the new). All
   succeeded at the first attempt.
+- 3.5: 3 streamed generate calls. All succeeded at the first attempt.
 
 ## L. Known issues
 
@@ -380,12 +399,14 @@ Item details (short form of the brief; the acceptance rules are binding):
 - Embeddings are 768 numbers instead of 3,072: checked on one short document only (item 3.3).
 - CNN timings vary by about a third from run to run on the development laptop; the September
   figure (19 s for 3 MNIST epochs) could not be reproduced (item 5.1).
+- While an answer is streaming it is shown as plain markdown; the final rendering (code
+  blocks with a copy button) replaces it when the answer is complete (item 3.5).
 - The exported script trains with plain model.fit, without steps_per_execution.
 - The local-Ollama tutor path is not verified on the development laptop; do not claim it works.
 
 ## M. Exact next action
 
-Start item 3.5: write the 3.4 commit hash and its CI result into table G. Confirm
-generate_content_stream in the google-genai docs. Stream the plain English tutor answer only
-(not agent mode, not Malayalam JSON mode), retrying only before the first chunk. Measure time
-to first text and total time with at most 3 real calls.
+Start item 6.1: write the 3.5 commit hash and its CI result into table G. Measure the import
+time of langchain_text_splitters and count the packages only it needs (python -m pip show, no
+installs). Replace it with our own short recursive splitter only if that removes at least 8
+packages or 0.3 s from the first document upload and the chunk-level tests still pass.

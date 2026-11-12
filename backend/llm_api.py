@@ -408,6 +408,43 @@ def generate(contents, model_id=None, config=None, **retry_kwargs):
     return call_with_retry(_call, **retry_kwargs)
 
 
+def generate_stream(contents, model_id=None, config=None, **retry_kwargs):
+    """Like generate(), but returns an iterator over the pieces of text as Gemini writes them.
+
+    Streaming does not make the answer arrive sooner as a whole; it lets the first words
+    appear while the rest is still being written.
+
+    Key rotation and retries apply only until the first piece has arrived (that wait happens
+    inside this call). After that nothing is retried: part of the answer may already be on
+    the screen, so an error in the middle is raised as an LLMError from the iterator.
+    """
+    model_id = model_id or current_model_id()
+
+    def _open():
+        chunks = iter(get_client().models.generate_content_stream(model=model_id, contents=contents, config=config))
+        return next(chunks, None), chunks          # the request is sent, and can fail, on the first next()
+
+    first, chunks = call_with_retry(_open, **retry_kwargs)
+
+    def pieces():
+        started = time.perf_counter()
+        chunk = last = first
+        try:
+            while chunk is not None:
+                last = chunk
+                text = chunk.text
+                if text:
+                    yield text
+                chunk = next(chunks, None)
+        except LLMError:
+            raise
+        except Exception as e:                     # not retried: the reader has already seen part of the answer
+            raise LLMError(friendly_error(e)) from e
+        finally:
+            usage.record_stream_end(time.perf_counter() - started, last)
+    return pieces()
+
+
 def generate_text(prompt, model_id=None, json_mode=False, thinking_budget=None, system=None,
                   cache=False, **retry_kwargs):
     """Text-in/text-out helper. With cache=True identical requests are answered from memory."""
