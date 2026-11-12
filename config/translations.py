@@ -128,6 +128,13 @@ UI = {
 
         # --- MCP remote training ---
         "mcp_header": "Advanced: remote training (MCP)",
+        "usage_header": "API usage (this session)",
+        "usage_none": "No Gemini requests yet in this session.",
+        "usage_calls": "**Requests sent:** {calls} ({generate} generate, {embed} embed) · failed: {failed} · retries: {retries}",
+        "usage_cache": "**Cache:** {hits} answered from memory · {misses} had to be sent",
+        "usage_tokens": "**Tokens:** prompt {prompt} · output {output} · thinking {thinking} · cached {cached}",
+        "usage_time": "**Waiting for Gemini:** {seconds} s in total · {per_call} s per request",
+        "usage_note": "Counts Gemini requests made from this browser session; every attempt counts, also failed ones. Token counts are the ones Gemini reports. Local Ollama requests are not counted.",
         "mcp_use": "Train on an MCP server",
         "mcp_use_help": "Send built-in datasets to a remote training server (e.g. a machine with a GPU) running mcp_server.py. Custom uploads always train on this computer.",
         "mcp_url_label": "MCP server URL",
@@ -466,6 +473,13 @@ If the validation loss rises while the training loss keeps falling, the model is
 
         # --- MCP remote training ---
         "mcp_header": "അഡ്വാൻസ്ഡ്: റിമോട്ട് പരിശീലനം (MCP)",
+        "usage_header": "API ഉപയോഗം (ഈ സെഷൻ)",
+        "usage_none": "ഈ സെഷനിൽ ഇതുവരെ Gemini request ഒന്നും അയച്ചിട്ടില്ല.",
+        "usage_calls": "**അയച്ച requests:** {calls} ({generate} generate, {embed} embed) · പരാജയപ്പെട്ടത്: {failed} · retries: {retries}",
+        "usage_cache": "**Cache:** {hits} എണ്ണം മെമ്മറിയിൽ നിന്ന് ഉത്തരം നൽകി · {misses} എണ്ണം അയയ്ക്കേണ്ടി വന്നു",
+        "usage_tokens": "**Tokens:** prompt {prompt} · output {output} · thinking {thinking} · cached {cached}",
+        "usage_time": "**Gemini-ക്കായി കാത്തിരുന്നത്:** ആകെ {seconds} സെക്കൻഡ് · ഒരു request-ന് {per_call} സെക്കൻഡ്",
+        "usage_note": "ഈ ബ്രൗസർ സെഷനിൽ നിന്ന് അയച്ച Gemini requests ആണ് എണ്ണുന്നത്; പരാജയപ്പെട്ട ശ്രമങ്ങളും എണ്ണും. Token എണ്ണം Gemini തന്നെ റിപ്പോർട്ട് ചെയ്യുന്നതാണ്. Local Ollama requests എണ്ണുന്നില്ല.",
         "mcp_use": "MCP സെർവറിൽ പരിശീലിപ്പിക്കുക",
         "mcp_use_help": "ബിൽറ്റ്-ഇൻ ഡാറ്റാസെറ്റുകൾ mcp_server.py പ്രവർത്തിക്കുന്ന ഒരു റിമോട്ട് സെർവറിലേക്ക് (ഉദാ. GPU ഉള്ള മെഷീൻ) അയയ്ക്കുക. ഇഷ്ടാനുസൃത അപ്‌ലോഡുകൾ എപ്പോഴും ഈ കമ്പ്യൂട്ടറിൽ പരിശീലിപ്പിക്കും.",
         "mcp_url_label": "MCP സെർവർ URL",

@@ -97,9 +97,9 @@ Empty until item 4.1.
 |------|----------|------|------|--------|--------|----|
 | 0.1 | MUST | S | Set up CLAUDE.md and this roadmap | CI VERIFIED | 8025149 | green |
 | 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | CI VERIFIED | f4f2c03 | green |
-| 2.1 | MUST | M | Exported script uses the app's three-way split | DONE | 3fecf64 | running when checked |
-| 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | DONE | see git log | pending |
-| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | NOT STARTED | | |
+| 2.1 | MUST | M | Exported script uses the app's three-way split | CI VERIFIED | 3fecf64 | green |
+| 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | CI VERIFIED | d866512 | green |
+| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | DONE | see git log | pending |
 | 3.2 | MUST | S | Request timeout on the Gemini client | NOT STARTED | | |
 | 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | NOT STARTED | | |
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | NOT STARTED | | |
@@ -192,6 +192,14 @@ Item details (short form of the brief; the acceptance rules are binding):
   item (no 2.2a / 2.2b split was needed). Files: tts_engine.py, app.py, agent_tools.py,
   mcp_server.py, config/translations.py, README.md, tests (narrative, agent tools, MCP, app
   smoke). Tests: 451 -> 453.
+- 3.1 (API usage meter): the instrument, not an optimisation. New backend/usage.py; llm_api
+  reports every attempt (calls, failed, retries), every cache lookup (hits, misses; per text for
+  embeddings), tokens from response.usage_metadata (prompt_token_count, candidates_token_count,
+  thoughts_token_count, cached_content_token_count: names confirmed in the google-genai docs)
+  and seconds per call. Sidebar expander "API usage (this session)" in both languages, filled
+  at the end of each run so it includes that run's calls. Files: backend/usage.py (new),
+  backend/llm_api.py, app.py, config/translations.py, tests (llm_api, app smoke, conftest).
+  Tests: 453 -> 458. No real Gemini call was used.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -236,6 +244,11 @@ Item details (short form of the brief; the acceptance rules are binding):
   The README limitation now says exactly that.
 - 2.2: the only new UI string (agent experiment box with a test accuracy) keeps its three
   labels in English in the Malayalam UI, as they are technical terms.
+- 3.1: "calls" counts every attempt sent to Gemini, failed ones included, because each
+  attempt uses quota. "seconds" is time inside the calls and excludes back-off sleeps.
+- 3.1: the meter is per browser session (st.session_state), with a module-level fallback
+  outside Streamlit, the same arrangement as llm_api._state. Ollama requests are not counted.
+- 3.1: no reset button was added to the sidebar: one more control for no user need.
 
 ## K. Real Gemini calls used
 
@@ -249,6 +262,7 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 3.1: write the 2.2 commit hash and its CI result into table G. Confirm the
-usage_metadata field names in the google-genai docs, then add backend/usage.py, call it from
-llm_api after every Gemini request, show it in a sidebar expander (both languages), with tests.
+Start item 3.2: write the 3.1 commit hash and its CI result into table G. The docs already
+confirm HttpOptions(timeout=<milliseconds>) on genai.Client. Still to confirm: whether the SDK
+retries on its own by default. Then add the two timeout constants, make sure a timeout is
+classified transient, and test with a fake that raises the timeout error.

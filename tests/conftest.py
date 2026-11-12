@@ -88,6 +88,15 @@ def synthetic_images():
 
 
 @pytest.fixture(autouse=True)
+def _fresh_usage_meter():
+    """The API usage meter falls back to one module-level dict outside Streamlit; start each test at zero."""
+    module = sys.modules.get("backend.usage")
+    if module is not None:
+        module.reset()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _fresh_experiment_cache():
     """agent_tools reuses identical experiments within a process; tests must not share them."""
     module = sys.modules.get("agent_tools")

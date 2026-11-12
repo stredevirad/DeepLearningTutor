@@ -536,3 +536,27 @@ def test_corrupt_test_image_gives_one_friendly_error(monkeypatch):
     assert not at.exception
     assert "could not be read as an image" in texts(at.error)
     assert at.session_state["test_image"] is None and at.session_state["test_upload_nonce"] == 1
+
+
+# ─────────────────────────── API usage meter ───────────────────────────
+
+def test_api_usage_expander_shows_this_sessions_numbers():
+    from backend import usage
+    at = new_app()
+    labels = [e.label for e in at.sidebar.expander]
+    assert "API usage (this session)" in labels
+    assert "No Gemini requests yet in this session." in texts(at.sidebar.caption)
+
+    totals = usage.new_totals()
+    totals.update(calls=3, failed=1, retries=1, cache_hits=2, cache_misses=1, prompt_tokens=1234, output_tokens=56,
+                  seconds=4.5, calls_by_kind={"generate": 2, "embed": 1})
+    at.session_state["api_usage"] = totals
+    at.run(timeout=TIMEOUT)
+    no_errors(at)
+    shown = texts(at.sidebar.markdown)
+    assert "**Requests sent:** 3 (2 generate, 1 embed) · failed: 1 · retries: 1" in shown
+    assert "prompt 1,234 · output 56" in shown and "2 answered from memory" in shown and "4.5 s in total" in shown
+
+    at.radio(key="lang_choice").set_value("Malayalam").run(timeout=TIMEOUT)
+    no_errors(at)
+    assert "API ഉപയോഗം (ഈ സെഷൻ)" in [e.label for e in at.sidebar.expander]

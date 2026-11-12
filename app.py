@@ -61,6 +61,7 @@ with st.spinner(T("starting_up")):
     import tensorflow as tf
 
     from backend import llm_api, ollama_api
+    from backend import usage as api_usage
     from backend.agent import build_user_parts, run_agent
     from components.chat_helpers import (
         call_ollama, parse_bilingual, render_response, run_hallucination_check,
@@ -540,6 +541,8 @@ with st.sidebar:
             else:
                 st.caption(T("mcp_disconnected"))
         st.caption(T("mcp_guide"))
+
+    usage_slot = st.container()      # filled at the end of the run, after this run's API calls
 
 
 # --- The configuration a click on Train would use ---
@@ -1420,3 +1423,23 @@ for tab, render in zip(tabs, renderers):
     if tab.open:
         with tab:
             render()
+
+
+def render_api_usage():
+    """Sidebar: what this session's Gemini requests have cost so far (backend/usage.py)."""
+    u = api_usage.snapshot()
+    with st.expander(T("usage_header"), expanded=False):
+        if not u["calls"] and not u["cache_hits"]:
+            st.caption(T("usage_none"))
+            return
+        st.markdown(T("usage_calls", calls=u["calls"], generate=u["calls_by_kind"].get("generate", 0),
+                      embed=u["calls_by_kind"].get("embed", 0), failed=u["failed"], retries=u["retries"]))
+        st.markdown(T("usage_cache", hits=u["cache_hits"], misses=u["cache_misses"]))
+        st.markdown(T("usage_tokens", prompt=f"{u['prompt_tokens']:,}", output=f"{u['output_tokens']:,}",
+                      thinking=f"{u['thinking_tokens']:,}", cached=f"{u['cached_tokens']:,}"))
+        st.markdown(T("usage_time", seconds=f"{u['seconds']:.1f}", per_call=f"{u['seconds_per_call'] or 0:.2f}"))
+        st.caption(T("usage_note"))
+
+
+with usage_slot:
+    render_api_usage()

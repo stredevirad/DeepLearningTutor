@@ -28,6 +28,8 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
+from backend import usage
+
 # Real environment variables win over .env (override=False), and tests can
 # skip .env entirely so a developer's real key is never used by the test suite.
 if os.getenv("DLT_SKIP_DOTENV") != "1":
@@ -254,18 +256,26 @@ def _find_available_key():
     return False
 
 
-def call_with_retry(func, *args, max_attempts=None, base_delay=1.0, sleep=time.sleep, **kwargs):
+def call_with_retry(func, *args, max_attempts=None, base_delay=1.0, sleep=time.sleep, usage_kind="generate",
+                    **kwargs):
     """Call `func` (which must fetch the client via get_client() on every call),
     rotating keys on quota errors and backing off exponentially (with jitter) on
-    quota/transient errors. Raises LLMError with a friendly message on failure."""
+    quota/transient errors. Raises LLMError with a friendly message on failure.
+    Every attempt is reported to the usage meter (backend/usage.py) as `usage_kind`."""
     if not API_KEYS:
         raise LLMUnavailableError("No Gemini API key is configured. Add GEMINI_API_KEYS to your .env file.")
     attempts = max_attempts or max(3, min(len(API_KEYS) + 2, 6))
     last_exc = None
     for attempt in range(attempts):
+        if attempt:
+            usage.record_retry()
+        started = time.perf_counter()
         try:
-            return func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            usage.record_call(usage_kind, time.perf_counter() - started, result)
+            return result
         except Exception as e:  # classified below; unknown errors fail fast
+            usage.record_call(usage_kind, time.perf_counter() - started, ok=False)
             last_exc = e
             kind = classify_error(e)
             if kind == "fatal":
@@ -373,6 +383,7 @@ def generate_text(prompt, model_id=None, json_mode=False, thinking_budget=None, 
     key = _cache_key("text", model_id, json_mode, thinking_budget, system, prompt) if cache else None
     if key:
         hit = _cache_get(_response_cache, key)
+        usage.record_cache(hit is not None)
         if hit is not None:
             return hit
     config = build_config(json_mode=json_mode, thinking_budget=thinking_budget, system=system)
@@ -397,6 +408,9 @@ def embed_texts(texts, task_type="RETRIEVAL_DOCUMENT", **retry_kwargs):
             out[i] = hit
         else:
             missing.append(i)
+    if texts:
+        usage.record_cache(True, len(texts) - len(missing))
+        usage.record_cache(False, len(missing))
 
     for start in range(0, len(missing), EMBED_BATCH_SIZE):
         batch_idx = missing[start:start + EMBED_BATCH_SIZE]
@@ -405,7 +419,7 @@ def embed_texts(texts, task_type="RETRIEVAL_DOCUMENT", **retry_kwargs):
         def _call():
             return get_client().models.embed_content(
                 model=EMBEDDING_MODEL, contents=batch, config=types.EmbedContentConfig(task_type=task_type))
-        result = call_with_retry(_call, **retry_kwargs)
+        result = call_with_retry(_call, usage_kind="embed", **retry_kwargs)
         vectors = [list(e.values) for e in (result.embeddings or [])]
         if len(vectors) != len(batch):
             raise LLMError("The embedding service returned an unexpected number of vectors.")

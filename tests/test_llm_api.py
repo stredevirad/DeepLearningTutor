@@ -6,6 +6,7 @@ import pytest
 from google.genai import errors as genai_errors
 
 from backend import llm_api as L
+from backend import usage as U
 
 
 def quota_error(msg="Resource exhausted."):
@@ -190,6 +191,60 @@ def test_embed_texts_batches_and_caches(fake_client, monkeypatch):
     assert len(fake_client.embed_calls) == 2                        # cached, no new call
     L.embed_texts(["a"], task_type="RETRIEVAL_QUERY")
     assert fake_client.embed_calls[-1][2] == "RETRIEVAL_QUERY"      # different task type -> new call
+
+
+# ─────────────────────────── usage meter ───────────────────────────
+
+def _with_usage(text="ok", prompt=120, output=30, thoughts=None, cached=None):
+    return SimpleNamespace(text=text, usage_metadata=SimpleNamespace(
+        prompt_token_count=prompt, candidates_token_count=output, thoughts_token_count=thoughts,
+        cached_content_token_count=cached, total_token_count=prompt + output))
+
+
+def test_usage_counts_calls_tokens_and_cache(keys, monkeypatch):
+    replies = [_with_usage(prompt=120, output=30, thoughts=50), _with_usage(prompt=200, output=10, cached=64)]
+    models = SimpleNamespace(generate_content=lambda **kw: replies.pop(0))
+    monkeypatch.setattr(L, "get_client", lambda: SimpleNamespace(models=models))
+    assert U.snapshot()["calls"] == 0 and U.snapshot()["cache_hit_rate"] is None
+    L.generate_text("review this run", cache=True)             # miss -> 1 call
+    L.generate_text("review this run", cache=True)             # hit  -> no call
+    L.generate_text("a chat question")                         # not cacheable -> 1 call, no cache lookup
+    u = U.snapshot()
+    assert (u["calls"], u["failed"], u["retries"]) == (2, 0, 0) and u["calls_by_kind"] == {"generate": 2, "embed": 0}
+    assert (u["cache_hits"], u["cache_misses"]) == (1, 1) and u["cache_hit_rate"] == 0.5
+    assert (u["prompt_tokens"], u["output_tokens"], u["thinking_tokens"], u["cached_tokens"]) == (320, 40, 50, 64)
+    assert u["seconds"] >= 0 and u["seconds_per_call"] is not None
+
+
+def test_usage_counts_failed_attempts_and_retries(keys):
+    flaky = Flaky(client_error(429, "quota"), TimeoutError("timed out"))
+    assert L.call_with_retry(flaky, sleep=lambda s: None) == "ok"
+    u = U.snapshot()
+    assert (u["calls"], u["failed"], u["retries"]) == (3, 2, 2)
+    with pytest.raises(L.LLMError):
+        L.call_with_retry(Flaky(client_error(400, "bad request")), sleep=lambda s: None)
+    u = U.snapshot()
+    assert (u["calls"], u["failed"], u["retries"]) == (4, 3, 2)   # a fatal error is not retried
+
+
+def test_usage_counts_embedding_batches_and_per_text_cache(fake_client, monkeypatch):
+    monkeypatch.setattr(L, "EMBED_BATCH_SIZE", 2)
+    L.embed_texts(["a", "bb", "ccc"])                           # 3 misses, 2 batches
+    L.embed_texts(["a", "dddd"])                                # 1 hit, 1 miss, 1 batch
+    u = U.snapshot()
+    assert u["calls_by_kind"] == {"generate": 0, "embed": 3} and u["calls"] == 3
+    assert (u["cache_hits"], u["cache_misses"]) == (1, 4)
+    assert u["prompt_tokens"] == 0                              # embedding responses carry no usage_metadata here
+    U.reset()
+    assert U.snapshot()["calls"] == 0 and U.snapshot()["calls_by_kind"] == {"generate": 0, "embed": 0}
+
+
+def test_usage_ignores_missing_or_odd_token_fields():
+    assert U.read_tokens(SimpleNamespace(text="x")) == {
+        "prompt_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cached_tokens": 0}
+    odd = SimpleNamespace(usage_metadata=SimpleNamespace(prompt_token_count="12", candidates_token_count=-5,
+                                                         thoughts_token_count=True, cached_content_token_count=7))
+    assert U.read_tokens(odd) == {"prompt_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cached_tokens": 7}
 
 
 def test_thinking_budget_only_for_models_that_support_it():
