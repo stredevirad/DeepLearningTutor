@@ -2,13 +2,17 @@
 Accuracy and Grad-CAM verification with the app's own training code
 ===================================================================
 Trains the recommended configurations on the full built-in datasets (same code
-path as the Train button: core.data -> core.models -> core.training) and checks:
+path as the Train button: core.data -> core.models -> core.training), records the
+validation accuracy and the held-out test accuracy of every run, and checks:
 
   * Iris  (Simple NN 2x16, Adam, lr 0.01, batch 16, 50 and 100 epochs)  >= 93 %
   * MNIST (CNN 2 conv, 16 filters, Adam, lr 0.001, batch 32, 3 epochs)  >= 97 %
   * Fashion-MNIST (same CNN, 3 epochs) and the repo's sample images
   * Grad-CAM on correctly classified MNIST validation digits: how much of the
     heatmap lies on the digit's pixels compared with chance, and how many maps are empty.
+
+The pass/fail thresholds are applied to the VALIDATION accuracy. The test accuracy is
+only reported: nothing is decided by looking at the test set.
 
     python benchmarks/verify_models.py --out results.json
 
@@ -44,6 +48,15 @@ def train(cfg, data):
     t0 = time.perf_counter()
     outcome = train_model(model, data, cfg)
     return model, outcome, time.perf_counter() - t0
+
+
+def accuracies(outcome, data):
+    """Validation and test accuracy of one run, with the number of examples behind each."""
+    final = outcome["final"]
+    return {"val_accuracy": round(final["val_accuracy"], 4), "val_samples": int(len(data.y_val)),
+            "test_accuracy": None if final["test_accuracy"] is None else round(final["test_accuracy"], 4),
+            "test_samples": int(len(data.y_test)) if data.has_test else 0,
+            "train_samples": int(len(data.y_train))}
 
 
 def gradcam_quality(model, data, n=300, seed=0):
@@ -83,7 +96,7 @@ def main():
         _, outcome, secs = train({"network_type": "Simple NN", "dataset": "Iris", "hidden_layers": 2,
                                   "nodes_per_layer": 16, "optimizer": "Adam", "learning_rate": 0.01,
                                   "batch_size": 16, "epochs": epochs, "seed": 42}, iris)
-        results[f"iris_{epochs}_epochs"] = {"val_accuracy": round(outcome["final"]["val_accuracy"], 4),
+        results[f"iris_{epochs}_epochs"] = {**accuracies(outcome, iris),
                                             "val_loss": round(outcome["final"]["val_loss"], 4),
                                             "train_seconds": round(secs, 1)}
         print("Iris", epochs, results[f"iris_{epochs}_epochs"], flush=True)
@@ -93,7 +106,7 @@ def main():
     mnist = prepare_builtin_images("MNIST", seed=42)
     model, outcome, secs = train({**cnn, "dataset": "MNIST"}, mnist)
     h = outcome["history"]["val_accuracy"]
-    results["mnist_3_epochs"] = {"val_accuracy": round(outcome["final"]["val_accuracy"], 4),
+    results["mnist_3_epochs"] = {**accuracies(outcome, mnist),
                                  "val_accuracy_per_epoch": [round(v, 4) for v in h],
                                  "val_loss": round(outcome["final"]["val_loss"], 4),
                                  "parameters": count_parameters(model)["total"], "train_seconds": round(secs, 1)}
@@ -112,8 +125,7 @@ def main():
     if not args.skip_fashion:
         fashion = prepare_builtin_images("Fashion-MNIST", seed=42)
         model, outcome, secs = train({**cnn, "dataset": "Fashion-MNIST"}, fashion)
-        results["fashion_3_epochs"] = {"val_accuracy": round(outcome["final"]["val_accuracy"], 4),
-                                       "train_seconds": round(secs, 1)}
+        results["fashion_3_epochs"] = {**accuracies(outcome, fashion), "train_seconds": round(secs, 1)}
         for fname in ("fashion_sneaker.png", "fashion_ankle_boot.png"):
             arr, _ = preprocess_image(open_image((ROOT / fname).read_bytes()), style="object")
             p = predict_proba(model, arr.reshape(1, 28, 28, 1))[0]

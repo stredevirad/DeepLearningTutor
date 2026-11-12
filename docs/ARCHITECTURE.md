@@ -107,17 +107,18 @@ sequenceDiagram
     A->>T: validate_config(ui_config)
     Note over T: fills defaults, checks every range,<br/>rejects unknown keys
     A->>D: prepare_builtin_tabular("Iris", seed)
-    Note over D: 1. split (stratified)<br/>2. fit scaler on TRAIN rows only<br/>3. transform the other rows with it
+    Note over D: 1. split: train / validation / test (stratified)<br/>2. fit scaler on TRAIN rows only<br/>3. transform the other rows with it
     D-->>A: PreparedData
     A->>T: set_global_seed(seed)
     A->>M: build_model(cfg, input_shape, classes)
     A->>T: train_model(model, data, cfg, callbacks=[live])
     loop every epoch
         T->>L: on_epoch_end(loss, accuracy)
-        L-->>U: live curves (redrawn at most every 0.3 s)
+        L-->>U: live curves: training and VALIDATION<br/>(redrawn at most every 0.3 s)
     end
     Note over T: evaluate the weights the model<br/>ends up with (early stopping may<br/>have restored an earlier epoch)
-    T-->>A: history, final metrics, confusion matrix
+    Note over T: evaluate the TEST split once:<br/>accuracy, confusion matrix,<br/>precision / recall / F1 per class
+    T-->>A: history, final metrics, confusion matrix, per-class table
     A->>A: store_training_results(): replaces the model<br/>AND everything derived from it
     A-->>U: result card
 ```
@@ -127,13 +128,21 @@ Details worth knowing:
 1. **Split before fit.** `prepare_tabular` splits the rows first and fits the
    `StandardScaler` / one-hot encoder on the training rows only. Fitting on all rows would
    leak information about the evaluation rows into training ("data leakage").
-2. **One data pipeline per fit.** `batch_pipeline` builds one repeating `tf.data` stream, so
+2. **Three splits, three jobs.** Training rows teach the model. Validation rows draw the
+   live curves and decide early stopping, so they influence the model. Test rows are
+   evaluated once, after training, and give the reported accuracy, the confusion matrix
+   and the per-class table. Tables and uploads: stratified 70 / 15 / 15 (`three_way_split`
+   in `core/data.py`). MNIST and Fashion-MNIST: 54,000 / 6,000 from the official training
+   images, and the official 10,000 test images. Data that is too small for every class to
+   appear in all three parts falls back to 80 / 20 without a test split, and the result
+   card then says that its number is a validation accuracy.
+3. **One data pipeline per fit.** `batch_pipeline` builds one repeating `tf.data` stream, so
    Keras does not rebuild an iterator every epoch. On Iris that fixed cost was larger than
    the maths.
-3. **Metrics describe the final weights.** With early stopping, Keras restores the best
+4. **Metrics describe the final weights.** With early stopping, Keras restores the best
    epoch's weights. `train_model` therefore re-evaluates the model after `fit` instead of
    reporting the last line of the history.
-4. **No stale state.** `store_training_results` calls `reset_trained_model()` first, so a
+5. **No stale state.** `store_training_results` calls `reset_trained_model()` first, so a
    new model can never be shown with the previous model's scaler, class names, predictions
    or Grad-CAM images.
 
