@@ -116,8 +116,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 3.2 | MUST | S | Request timeout on the Gemini client | CI VERIFIED | d2bc89e | green |
 | 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | CI VERIFIED | 4.1a 0caebba; 4.1b d77ecda; 4.1c 5cd2d77 | green (all three) |
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | CI VERIFIED | 0d9fd7f | green |
-| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | DONE | see git log | pending |
-| 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | NOT STARTED | | |
+| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | DONE | 9e7fdb8 | running when checked |
+| 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | REVERTED | see git log (roadmap only) | pending |
 | 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | NOT STARTED | | |
 | 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | NOT STARTED | | |
 | 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | NOT STARTED | | |
@@ -284,6 +284,22 @@ Item details (short form of the brief; the acceptance rules are binding):
   prefetch was already in the pipeline. Only epochs of 320 batches or more use the lever
   (image models); tables keep one batch per call. Files: core/training.py,
   tests/test_training.py. Tests: 467 -> 469.
+- 3.4 (prompt structure), 4 real calls on gemini-2.5-flash, Intermediate level, no model
+  trained, two short questions per structure:
+
+  | Structure | Prompt tokens | Cached tokens | Seconds |
+  |-----------|---------------|---------------|---------|
+  | old: everything in one user message | 513, 514 | 0, 0 | 2.3, 2.5 |
+  | new: fixed instructions as system_instruction | 514, 515 | 0, 0 | 1.8, 1.9 |
+
+  The fixed instructions are 1,996 characters, about 500 tokens. The Gemini docs give 2,048
+  tokens as the minimum prompt size for implicit caching on Gemini 2.5 Flash and 2.5 Pro, so
+  these prompts are four times too small to be cached, and no cached tokens were reported.
+  The new structure cost one prompt token MORE per call. Rule: keep only if prompt tokens do
+  not rise. TRIED, NO GAIN: the app code was not changed (the experiment lived in a script in
+  the run folder). The seconds differ by less than normal network variation and prove nothing.
+  The user message was already ordered stable-first (instructions, knowledge base, history,
+  status, question).
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -350,10 +366,12 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## K. Real Gemini calls used
 
-3 of 12.
+7 of 12.
 
 - 3.3: 3 embedding calls (study-guide passages at 3,072; 20 questions at 3,072; 20 questions at
   768). All succeeded at the first attempt.
+- 3.4: 4 generate calls (two questions in the old prompt structure, two in the new). All
+  succeeded at the first attempt.
 
 ## L. Known issues
 
@@ -367,7 +385,7 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 3.4: write the 5.1 commit hash and its CI result into table G. Read the Gemini
-docs on implicit caching (minimum prompt size for the 2.5 models). Move the fixed tutor
-instructions into system_instruction for the plain Gemini chat path, order the user message
-stable-first, and record prompt and cached tokens before and after with at most 4 real calls.
+Start item 3.5: write the 3.4 commit hash and its CI result into table G. Confirm
+generate_content_stream in the google-genai docs. Stream the plain English tutor answer only
+(not agent mode, not Malayalam JSON mode), retrying only before the first chunk. Measure time
+to first text and total time with at most 3 real calls.
