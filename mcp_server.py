@@ -178,7 +178,9 @@ def _run_training_job(job_id: str, config: dict):
             job["status"] = "completed"
             job["result"] = result
             job["model_b64"] = model_b64
-        _log(job_id, f"Training completed — Val Acc: {result['results']['final_val_accuracy']}")
+        test_acc = result["results"].get("final_test_accuracy")
+        _log(job_id, f"Training completed — Val Acc: {result['results']['final_val_accuracy']}, "
+                     + (f"Test Acc: {test_acc}" if test_acc is not None else "no test set (dataset too small)"))
     except Exception as e:  # report any failure to the client instead of crashing the worker
         from core.training import ConfigError, DataError
         if isinstance(e, (ConfigError, DataError)):

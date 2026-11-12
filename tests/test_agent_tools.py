@@ -89,6 +89,18 @@ def test_compare_experiments():
     assert r["status"] == "success" and r["best_experiment"]["index"] == 1 and r["worst_experiment"]["index"] == 2
     assert r["accuracy_spread"] == pytest.approx(0.23)
     assert [x["rank"] for x in r["ranking"]] == [1, 2, 3]
+    assert r["best_experiment"]["test_accuracy"] is None and "No test accuracy" in r["note"]
+
+
+def test_compare_experiments_ranks_by_validation_and_reports_test():
+    runs = [_exp(0.80, 0.001), _exp(0.93, 0.01), _exp(0.70, 0.1)]
+    for run, test_acc in zip(runs, (0.95, 0.88, 0.71)):       # the best TEST accuracy is not the best validation run
+        run["results"]["final_test_accuracy"] = test_acc
+    r = T.compare_experiments(json.dumps(runs))
+    assert r["best_experiment"]["index"] == 1                 # still chosen by validation accuracy
+    assert r["best_experiment"]["test_accuracy"] == 0.88 and r["worst_experiment"]["test_accuracy"] == 0.71
+    assert [x["test_accuracy"] for x in r["ranking"]] == [0.88, 0.95, 0.71]
+    assert "test accuracy (0.8800)" in r["note"] and "ranked by validation accuracy on purpose" in r["note"]
 
 
 @pytest.mark.parametrize("bad", ["not json", "[]", "{}", json.dumps([1, 2]), None])

@@ -47,6 +47,17 @@ def test_prompt_uses_evaluated_metrics_and_early_stopping_info():
                                       {"train_accuracy": 0.99, "val_accuracy": 0.97, "val_loss": 0.1},
                                       training_info={"stopped_early": True, "weights_restored": True, "best_epoch": 12})
     assert "Val Acc: 0.9700" in prompt and "best epoch (12)" in prompt and "WITHIN" in prompt
+    assert "Test Acc: not available" in prompt                # no test split in these metrics
+
+
+def test_prompt_quotes_the_test_accuracy_when_there_is_one():
+    prompt = T.build_narrative_prompt(CFG, iris_history(0.9), CM, None, {
+        "train_accuracy": 0.99, "val_accuracy": 0.97, "val_loss": 0.1, "test_loss": 0.2, "test_accuracy": 0.9545})
+    assert "Test Acc: 0.9545 (held-out test set" in prompt and "Val Acc: 0.9700" in prompt
+    assert "Never call a validation accuracy a test accuracy" in prompt
+    none = T.build_narrative_prompt(CFG, iris_history(0.9), CM, None, {
+        "train_accuracy": 0.99, "val_accuracy": 0.97, "val_loss": 0.1, "test_loss": None, "test_accuracy": None})
+    assert "Test Acc: not available" in none and "0.9545" not in none
 
 
 @pytest.mark.parametrize("level", ["Beginner", "Intermediate", "Advanced"])

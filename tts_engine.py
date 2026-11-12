@@ -133,6 +133,12 @@ def build_narrative_prompt(config, history, confusion_data, model_summary, final
     dataset = config.get("dataset", "?")
     tier, verdict_sentence = performance_verdict(dataset, fm["val_accuracy"], confusion_data)
     gap = fm["train_accuracy"] - fm["val_accuracy"]
+    # The held-out test split (None when the data was too small for one): evaluated once, after training.
+    if fm.get("test_accuracy") is not None:
+        test_line = (f"Test Acc: {fm['test_accuracy']:.4f} (held-out test set, never used for training or early "
+                     "stopping; this is the number to quote for how good the model is)")
+    else:
+        test_line = "Test Acc: not available (the dataset was too small for a separate test set)"
     info = training_info or {}
     epochs_line = f"Epochs run: {len(history.get('loss', []))} of {config.get('epochs', '?')}"
     if info.get("stopped_early"):
@@ -164,6 +170,7 @@ Patterns: {detected_patterns}
 Confusion: {confusion_report}
 
 Final (evaluated on the weights the model ended with) — Train Acc: {fm['train_accuracy']:.4f}, Val Acc: {fm['val_accuracy']:.4f}, Val Loss: {fm['val_loss']:.4f}, Train-Val gap: {gap * 100:.1f} points
+{test_line}
 
 ═══ PERFORMANCE VERDICT (computed, you must follow it) ═══
 {verdict_sentence}
@@ -172,6 +179,7 @@ Rules:
 - Your opening bold verdict MUST match the performance verdict above. Only use words like "excellent" or "exceptional" if the verdict is ABOVE the typical range; never use "brilliant".
 - Analyze the SPECIFIC numbers and trends. If overfitting, explain WHY for this architecture. If classes are confused, hypothesize WHY.
 - Be encouraging: mention one thing that went well, then give ONE concrete, actionable recommendation (e.g. a specific learning rate or epoch count).
+- When a test accuracy is given, state it as the model's result and say it is a test accuracy; use the validation numbers to discuss training behaviour (overfitting, early stopping). Never call a validation accuracy a test accuracy.
 - No code blocks.
 
 Write your critique now. Start with a bold verdict."""

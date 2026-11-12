@@ -263,12 +263,11 @@ python benchmarks/run_benchmarks.py --out results.json   # start-up, rerun and c
 
 ## Limitations
 
-- **The test set is not carried through every part yet.** The main screen uses it. These
-  parts still work with validation numbers, and are labelled as such:
-  - the AI Professor's review and the tutor's context describe the validation accuracy;
-  - the agent's tools rank experiments by validation accuracy (which is correct) but do not
-    quote the test accuracy in their comparison, and the remote-training log prints only
-    the validation accuracy.
+- **The reference ranges are validation ranges.** The verdict "below / within / above the
+  typical range" compares the validation accuracy with a typical range for each built-in
+  dataset. The AI Professor's review, the tutor, the agent's comparison and the
+  remote-training log all quote the test accuracy beside it; the agent still ranks
+  experiments by validation accuracy, so that the test set is never used to choose a model.
 - **Small test sets are noisy.** Iris has 22 test rows; one flower is 4.5 points. There is
   one split per seed and no cross-validation.
 - **Deliberately small models.** They train in seconds on a CPU; they are for teaching, not

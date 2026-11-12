@@ -70,6 +70,7 @@ class FakeGemini:
         self.reply = reply
         self.agent_calls = list(agent_calls or [])
         self.prompts = []
+        self.text_prompts = []
 
     def generate(self, contents, model_id=None, config=None, **kw):
         self.prompts.append((contents, config))
@@ -81,6 +82,7 @@ class FakeGemini:
             content=types.Content(role="model", parts=[types.Part(text=self.reply)]))])
 
     def generate_text(self, prompt, model_id=None, json_mode=False, **kw):
+        self.text_prompts.append(prompt)
         if json_mode and "Fact-Checker" in prompt:
             return json.dumps({"grounding_score": 90, "hallucinated_claims": [], "verdict": "Supported by the notes."})
         return "**Below the typical range.** Train for more epochs."
@@ -414,6 +416,8 @@ def test_review_is_on_demand_and_chat_renders_code(gemini):
     at.button(key="review_button").click().run(timeout=TIMEOUT)
     no_errors(at)
     assert "Below the typical range" in texts(at.markdown)    # AI Professor's review (mocked)
+    test_acc = at.session_state["training_outcome"]["final"]["test_accuracy"]
+    assert f"Test Acc: {test_acc:.4f} (held-out test set" in gemini.text_prompts[-1]
     at.button(key="listen_button").click().run(timeout=TIMEOUT)
     assert "gTTS needs an internet connection" in texts(at.caption)   # network is blocked in tests
 
@@ -433,6 +437,8 @@ def test_quick_action_opens_the_tutor_and_asks(gemini):
     no_errors(at)
     assert at.session_state["active_tab"] == TUTOR
     assert "confusion matrix" in gemini.last_prompt_text()
+    test_acc = at.session_state["training_outcome"]["final"]["test_accuracy"]
+    assert f"Test Accuracy (held-out test set, evaluated once after training): {test_acc:.4f}" in gemini.last_prompt_text()
 
 
 def test_chat_history_is_not_duplicated(gemini):

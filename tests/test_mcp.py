@@ -84,7 +84,8 @@ def test_train_job_runs_in_background_and_reports(client):
     assert "model_b64" not in done
 
     logs = client.get(f"/logs/{job['job_id']}").json()["logs"]
-    assert any("Training completed" in line for line in logs)
+    assert any("Training completed" in line and "Val Acc:" in line and "Test Acc:" in line for line in logs)
+    assert done["result"]["results"]["final_test_accuracy"] is not None
     assert any("Epoch 2/2" in line for line in logs)
 
     with_model = client.post("/call", json={"name": "get_training_status",

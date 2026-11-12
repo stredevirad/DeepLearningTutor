@@ -980,6 +980,9 @@ def project_status():
         out += (f"Final Training Loss: {final['train_loss']:.4f}, Final Validation Loss: {final['val_loss']:.4f}.\n"
                 f"Final Training Accuracy: {final['train_accuracy']:.4f}, "
                 f"Final Validation Accuracy: {final['val_accuracy']:.4f}.\n"
+                + (f"Test Accuracy (held-out test set, evaluated once after training): {final['test_accuracy']:.4f}.\n"
+                   if final.get("test_accuracy") is not None
+                   else "No separate test set (the dataset was too small); the validation accuracy is the reported number.\n") +
                 f"Epochs run: {outcome.get('epochs_run')} (best epoch {outcome.get('best_epoch')}).\n")
     if ss.model_params:
         out += f"Parameters: {ss.model_params['total']:,} ({ss.model_params['trainable']:,} trainable).\n"
@@ -1104,7 +1107,11 @@ def run_agent_turn(full_prompt, images, save_and_render, check):
         box = statuses["box"]
         if name == "run_experiment" and result.get("status") == "success":
             r = result["results"]
-            box.write(T("agent_exp_result", loss=r["final_val_loss"], acc=r["final_val_accuracy"]))
+            if r.get("final_test_accuracy") is not None:
+                box.write(T("agent_exp_result_test", loss=r["final_val_loss"], acc=r["final_val_accuracy"],
+                            test=r["final_test_accuracy"]))
+            else:
+                box.write(T("agent_exp_result", loss=r["final_val_loss"], acc=r["final_val_accuracy"]))
         elif result.get("status") == "error":
             box.write(T("agent_error", error=result.get("error")))
         else:

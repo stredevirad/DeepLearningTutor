@@ -206,6 +206,15 @@ def explain_concept(topic: str, depth: str = "beginner") -> dict:
     }
 
 
+def _test_accuracy_of(exp):
+    """The run's test accuracy, or None (no test split, or a result from before the test set existed)."""
+    try:
+        value = exp.get("results", {}).get("final_test_accuracy")
+        return None if value is None else float(value)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def _accuracy_of(exp):
     try:
         return float(exp.get("results", {}).get("final_val_accuracy", 0) or 0)
@@ -225,7 +234,8 @@ def compare_experiments(experiment_summaries: str) -> dict:
     Args:
         experiment_summaries: A JSON string containing a list of experiment result
             dictionaries (each from a previous run_experiment call). Each entry should
-            have at minimum: config, results (with final_val_accuracy, final_val_loss).
+            have at minimum: config, results (with final_val_accuracy, final_val_loss;
+            final_test_accuracy is reported too when present).
 
     Returns:
         Dictionary with comparison analysis: best model, ranking, and recommendations.
@@ -253,12 +263,14 @@ def compare_experiments(experiment_summaries: str) -> dict:
             "index": best_idx,
             "val_accuracy": best.get("results", {}).get("final_val_accuracy"),
             "val_loss": best.get("results", {}).get("final_val_loss"),
+            "test_accuracy": _test_accuracy_of(best),
             "config": best.get("config", {}),
         },
         "worst_experiment": {
             "index": worst_idx,
             "val_accuracy": worst.get("results", {}).get("final_val_accuracy"),
             "val_loss": worst.get("results", {}).get("final_val_loss"),
+            "test_accuracy": _test_accuracy_of(worst),
             "config": worst.get("config", {}),
         },
         "ranking": [
@@ -267,6 +279,7 @@ def compare_experiments(experiment_summaries: str) -> dict:
                 "index": idx,
                 "val_accuracy": exp.get("results", {}).get("final_val_accuracy"),
                 "val_loss": exp.get("results", {}).get("final_val_loss"),
+                "test_accuracy": _test_accuracy_of(exp),
                 "parameters": (exp.get("parameters") or {}).get("total"),
                 "key_config": {
                     k: exp.get("config", {}).get(k)
@@ -289,6 +302,13 @@ def compare_experiments(experiment_summaries: str) -> dict:
         + ". Call the top run the best validation result in these runs, not a universally better model; "
           "on small datasets a difference of one or two examples is within noise. Also weigh validation loss "
           "and model size (parameters).")
+    if _test_accuracy_of(best) is not None:
+        comparison["note"] += (
+            f" The runs are ranked by validation accuracy on purpose: choosing by test accuracy would turn the test "
+            f"set into a second validation set. Report the chosen run's test accuracy ({_test_accuracy_of(best):.4f}) "
+            "as its final result, and say that it is a test accuracy.")
+    else:
+        comparison["note"] += " No test accuracy is available for the top run, so quote its validation accuracy as such."
     if comparison["accuracy_spread"] < 0.02:
         comparison["recommendation"] = (
             "The runs performed about the same (validation accuracy within 2 points), so this comparison does not "

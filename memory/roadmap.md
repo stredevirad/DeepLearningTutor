@@ -97,8 +97,8 @@ Empty until item 4.1.
 |------|----------|------|------|--------|--------|----|
 | 0.1 | MUST | S | Set up CLAUDE.md and this roadmap | CI VERIFIED | 8025149 | green |
 | 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | CI VERIFIED | f4f2c03 | green |
-| 2.1 | MUST | M | Exported script uses the app's three-way split | DONE | see git log | pending |
-| 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | NOT STARTED | | |
+| 2.1 | MUST | M | Exported script uses the app's three-way split | DONE | 3fecf64 | running when checked |
+| 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | DONE | see git log | pending |
 | 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | NOT STARTED | | |
 | 3.2 | MUST | S | Request timeout on the Gemini client | NOT STARTED | | |
 | 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | NOT STARTED | | |
@@ -184,6 +184,14 @@ Item details (short form of the brief; the acceptance rules are binding):
   a custom CSV, a custom ZIP, and a tiny CSV that falls back to 80/20 in both). Files:
   core/codegen.py, app.py (meta gains "has_test"), config/translations.py (caption, both
   languages), README.md, tests/test_codegen.py. Tests: 450 -> 451.
+- 2.2 (test accuracy everywhere else): not a speed item. The AI review prompt now carries a
+  "Test Acc" line (or says there is no test set) and a rule never to call a validation number a
+  test number; the tutor's project status quotes the test accuracy; compare_experiments still
+  ranks by validation accuracy and now reports each run's test accuracy and says why it does not
+  rank by it; the agent's experiment box and the MCP job log show both numbers. Done in one
+  item (no 2.2a / 2.2b split was needed). Files: tts_engine.py, app.py, agent_tools.py,
+  mcp_server.py, config/translations.py, README.md, tests (narrative, agent tools, MCP, app
+  smoke). Tests: 451 -> 453.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -221,6 +229,13 @@ Item details (short form of the brief; the acceptance rules are binding):
   sizes, not bit-identical weights (the app trains through its own tf.data pipeline).
 - From 2.1 on the user asked for all items to be done in one sitting instead of one per
   session; the one item = one commit = one push rule is unchanged.
+- 2.2: mcp_client.py needed no change: it never mentions an accuracy; it passes the server's
+  result through, which already carried final_test_accuracy.
+- 2.2: the "below / within / above the typical range" verdict still compares the VALIDATION
+  accuracy with the reference ranges, because those ranges were set for validation accuracy.
+  The README limitation now says exactly that.
+- 2.2: the only new UI string (agent experiment box with a test accuracy) keeps its three
+  labels in English in the Malayalam UI, as they are technical terms.
 
 ## K. Real Gemini calls used
 
@@ -228,13 +243,12 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## L. Known issues
 
-- Review prompt, tutor context, agent tools and MCP speak only of validation accuracy (item 2.2).
+- The typical-range verdict compares validation accuracy, not test accuracy (by design, see J).
 - CNN training about twice as slow as the September figure, unexplained (item 5.1).
 - The local-Ollama tutor path is not verified on the development laptop; do not claim it works.
 
 ## M. Exact next action
 
-Start item 2.2: write the 2.1 commit hash and its CI result into table G. Then add test accuracy
-to the AI review prompt (tts_engine.py), the tutor's project status (app.py project_status), the
-agent tools (agent_tools.py; keep ranking by validation), mcp_server.py and mcp_client.py, with
-tests, and remove the matching README limitations.
+Start item 3.1: write the 2.2 commit hash and its CI result into table G. Confirm the
+usage_metadata field names in the google-genai docs, then add backend/usage.py, call it from
+llm_api after every Gemini request, show it in a sidebar expander (both languages), with tests.
