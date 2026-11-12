@@ -92,6 +92,18 @@ def confusion_chart(cm, class_names, labels):
     return (heat + text).properties(width=size, height=size)
 
 
+def per_class_table(rows, labels):
+    """Precision, recall and F1 of every class as a small table (one row per class).
+    `rows` is the "per_class" list made by core.training.per_class_metrics."""
+    return pd.DataFrame({
+        labels["pc_class"]: [str(r["class"]) for r in rows],
+        labels["pc_precision"]: [f"{r['precision'] * 100:.1f}%" for r in rows],
+        labels["pc_recall"]: [f"{r['recall'] * 100:.1f}%" for r in rows],
+        labels["pc_f1"]: [f"{r['f1'] * 100:.1f}%" for r in rows],
+        labels["cm_count"]: [int(r["support"]) for r in rows],
+    })
+
+
 def probabilities_chart(class_names, probs, pred_idx, labels):
     """Horizontal bars of the model's softmax output for every class (predicted class highlighted)."""
     names = [str(c) for c in class_names]

@@ -67,7 +67,7 @@ with st.spinner(T("starting_up")):
     )
     from components.training_ui import LiveTrainingCallback
     from components.visualizations import (
-        confusion_chart, enlarge, gradcam_overlay, history_charts, probabilities_chart,
+        confusion_chart, enlarge, gradcam_overlay, history_charts, per_class_table, probabilities_chart,
         render_code_download, render_experiment_chart, render_experiment_confusion_matrix,
         render_parameter_summary, show_chart,
     )
@@ -255,7 +255,7 @@ def config_signature(cfg, custom_id=None):
 CHART_KEYS = ["train_loss", "val_loss", "train_acc", "val_acc", "epoch_axis", "loss_axis", "acc_axis",
               "plot_loss", "plot_acc", "best_epoch_line", "confusion_title", "actual", "predicted",
               "confidence_pct", "class_probs", "epoch_running", "epoch_done", "cm_count", "cm_share",
-              "params_summary"]
+              "params_summary", "pc_class", "pc_precision", "pc_recall", "pc_f1"]
 
 
 def chart_labels():
@@ -861,14 +861,18 @@ def render_viz_tab():
     st.caption(T("curves_help"))
 
     if ss.confusion_data:
+        cm_split = T("cm_on_test" if ss.confusion_data.get("split") == "test" else "cm_on_val",
+                     n=f"{int(np.sum(ss.confusion_data['matrix'])):,}")
         c1, c2 = st.columns([3, 2])
         with c1:
-            cm_split = T("cm_on_test" if ss.confusion_data.get("split") == "test" else "cm_on_val",
-                         n=f"{int(np.sum(ss.confusion_data['matrix'])):,}")
             st.markdown(f"**{T('confusion_title')}** ({cm_split})")
             st.altair_chart(confusion_chart(ss.confusion_data["matrix"], ss.confusion_data["class_names"], labels),
                             width="content")
         with c2:
+            if outcome.get("per_class"):          # same examples as the confusion matrix
+                st.markdown(f"**{T('per_class_title')}** ({cm_split})")
+                st.dataframe(per_class_table(outcome["per_class"], labels), hide_index=True, width="stretch")
+                st.caption(T("per_class_help"))
             st.markdown(f"##### {T('cm_read_header')}")
             st.markdown(T("cm_read"))
             worst = most_confused(ss.confusion_data["matrix"], [str(c) for c in ss.confusion_data["class_names"]])

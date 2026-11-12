@@ -10,7 +10,7 @@ from config.translations import UI
 
 LABEL_KEYS = ["train_loss", "val_loss", "train_acc", "val_acc", "epoch_axis", "loss_axis", "acc_axis", "plot_loss",
               "plot_acc", "best_epoch_line", "confusion_title", "actual", "predicted", "confidence_pct", "class_probs",
-              "cm_count", "cm_share", "params_summary"]
+              "cm_count", "cm_share", "params_summary", "pc_class", "pc_precision", "pc_recall", "pc_f1"]
 
 
 def labels(lang):
@@ -56,6 +56,16 @@ def test_confusion_chart_handles_a_class_with_no_samples():
     chart = V.confusion_chart(np.zeros((3, 3), dtype=int), ["x", "y", "z"], labels("en"))
     data = next(iter(chart.to_dict()["datasets"].values()))
     assert len(data) == 9 and all(d["share"] == 0.0 for d in data)
+
+
+@pytest.mark.parametrize("lang", ["en", "ml"])
+def test_per_class_table_has_one_row_per_class_in_the_ui_language(lang):
+    from core.training import per_class_metrics
+    lab = labels(lang)
+    rows = per_class_metrics([[3, 1], [0, 4]], ["a", "b"])          # a: 3 of 4 found; b: 4 of 5 predictions right
+    table = V.per_class_table(rows, lab)
+    assert list(table.columns) == [lab["pc_class"], lab["pc_precision"], lab["pc_recall"], lab["pc_f1"], lab["cm_count"]]
+    assert table.values.tolist() == [["a", "100.0%", "75.0%", "85.7%", 4], ["b", "80.0%", "100.0%", "88.9%", 4]]
 
 
 def test_probabilities_chart_marks_the_predicted_class():

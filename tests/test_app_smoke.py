@@ -174,6 +174,11 @@ def test_train_iris_and_every_tab_renders():
     assert "Most frequent mistake" in texts(at.markdown) or "No mistakes" in texts(at.markdown)
     assert "(test set, 22 examples)" in texts(at.markdown)
     assert int(at.session_state["confusion_data"]["matrix"].sum()) == 22
+    # Per-class precision / recall / F1 beside the confusion matrix, on the same 22 test rows.
+    assert "Precision, recall and F1 per class" in texts(at.markdown)
+    table = at.dataframe[0].value
+    assert list(table.columns) == ["Class", "Precision", "Recall", "F1", "Examples"]
+    assert table["Class"].tolist() == ["setosa", "versicolor", "virginica"] and int(table["Examples"].sum()) == 22
     assert "Add a Gemini key or start Ollama" in texts(at.caption)   # no AI configured: no review button
 
     # Test & Export: model download reloads, code is leak-free and matches the config.
