@@ -8,7 +8,8 @@ from sklearn.preprocessing import StandardScaler
 
 from core import data as D
 from core.models import build_model
-from core.training import (ConfigError, compact_history, run_experiment, set_global_seed,
+from core import training as T
+from core.training import (ConfigError, compact_history, per_class_metrics, run_experiment, set_global_seed,
                            train_model, validate_config)
 from tests.helpers import fake_image_loader
 
@@ -61,9 +62,11 @@ def test_simple_nn_scaler_fitted_on_train_only(monkeypatch):
     set_global_seed(cfg["seed"])
     data = D.prepare_builtin_tabular("Iris", seed=1)
     outcome = train_model(build_model(cfg, data.input_shape, data.num_classes), data, cfg)
-    assert fitted_rows == [120]                 # 80% of 150 rows, never the full 150
+    assert fitted_rows == [106]                 # the 106 training rows (of 150), never the full 150
     assert outcome["epochs_run"] == 2
     assert outcome["confusion_matrix"].shape == (3, 3)
+    # The confusion matrix and the per-class table describe the 22 test rows.
+    assert outcome["eval_split"] == "test" and outcome["eval_samples"] == 22 == int(outcome["confusion_matrix"].sum())
 
 
 def test_cnn_short_training(synthetic_images):
@@ -88,6 +91,10 @@ def test_final_metrics_describe_the_returned_weights():
     val_loss, val_acc = model.evaluate(data.X_val, data.y_val, verbose=0)
     assert outcome["final"]["val_loss"] == pytest.approx(val_loss, rel=1e-5)
     assert outcome["final"]["val_accuracy"] == pytest.approx(val_acc)
+    test_loss, test_acc = model.evaluate(data.X_test, data.y_test, verbose=0)
+    assert outcome["final"]["test_loss"] == pytest.approx(test_loss, rel=1e-5)
+    assert outcome["final"]["test_accuracy"] == pytest.approx(test_acc)
+    assert np.trace(outcome["confusion_matrix"]) / outcome["confusion_matrix"].sum() == pytest.approx(test_acc)
     assert 1 <= outcome["best_epoch"] <= outcome["epochs_run"] <= 25
     # Restored weights are the best-val-loss epoch's weights.
     assert min(outcome["history"]["val_loss"]) == pytest.approx(outcome["history"]["val_loss"][outcome["best_epoch"] - 1])
@@ -102,6 +109,50 @@ def test_confusion_matrix_has_every_class_even_if_absent_from_val():
     cfg = validate_config({"epochs": 1})
     outcome = train_model(build_model(cfg, (3,), 3), data, cfg)
     assert outcome["confusion_matrix"].shape == (3, 3)
+    # No test split in this hand-made data: the numbers are validation numbers and say so.
+    assert outcome["eval_split"] == "validation" and outcome["eval_samples"] == 10
+    assert outcome["final"]["test_accuracy"] is None and outcome["final"]["test_loss"] is None
+
+
+def test_test_split_is_evaluated_exactly_once_and_only_after_training(monkeypatch):
+    """Validation data is used during fit; the test split is touched once, afterwards."""
+    cfg = validate_config({"dataset": "Wine", "epochs": 3, "early_stopping": True, "seed": 2})
+    set_global_seed(cfg["seed"])
+    data = D.prepare_builtin_tabular("Wine", seed=2)
+    model = build_model(cfg, data.input_shape, data.num_classes)
+    events = []
+    real_fit, real_evaluate = model.fit, T.evaluate_split
+
+    def spy_fit(*args, **kwargs):
+        events.append("fit")
+        return real_fit(*args, **kwargs)
+
+    def spy_evaluate(model_, X, y, logits_fn=None):
+        events.append("test" if X is data.X_test else "val" if X is data.X_val else "train")
+        return real_evaluate(model_, X, y, logits_fn)
+
+    monkeypatch.setattr(model, "fit", spy_fit)
+    monkeypatch.setattr(T, "evaluate_split", spy_evaluate)
+    train_model(model, data, cfg)
+    assert events.count("test") == 1 and events.index("test") > events.index("fit")
+    assert events == ["fit", "train", "val", "test"]
+
+
+def test_per_class_metrics_match_sklearn():
+    from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
+    rng = np.random.default_rng(0)
+    y_true = rng.integers(0, 4, size=300)
+    y_pred = np.where(rng.random(300) < 0.7, y_true, rng.integers(0, 4, size=300))
+    y_pred[y_pred == 3] = 2                                        # class 3 is never predicted: precision 0, not NaN
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2, 3])
+    rows = per_class_metrics(cm, ["a", "b", "c", "d"])
+    p, r, f, s = precision_recall_fscore_support(y_true, y_pred, labels=[0, 1, 2, 3], zero_division=0)
+    assert [row["class"] for row in rows] == ["a", "b", "c", "d"]
+    np.testing.assert_allclose([row["precision"] for row in rows], p, atol=1e-4)
+    np.testing.assert_allclose([row["recall"] for row in rows], r, atol=1e-4)
+    np.testing.assert_allclose([row["f1"] for row in rows], f, atol=1e-4)
+    assert [row["support"] for row in rows] == s.tolist()
+    assert rows[3]["precision"] == 0.0 and rows[3]["f1"] == 0.0
 
 
 def test_same_seed_same_result():
@@ -114,6 +165,11 @@ def test_run_experiment_result_is_json_ready():
     result = run_experiment({"dataset": "Breast Cancer", "epochs": 2})
     json.dumps(result)
     assert result["status"] == "success" and result["num_classes"] == 2
+    assert result["evaluated_on"] == "test"
+    assert result["train_samples"] + result["val_samples"] + result["test_samples"] == 569
+    assert 0.0 <= result["results"]["final_test_accuracy"] <= 1.0
+    assert sum(sum(row) for row in result["confusion_matrix"]) == result["test_samples"]
+    assert [row["class"] for row in result["per_class"]] == result["class_names"]
     assert result["parameters"]["total"] == result["parameters"]["trainable"]
     assert result["history_summary"]["sampled_epochs"] == [1, 2]
 
@@ -122,6 +178,7 @@ def test_run_experiment_cnn_with_fake_loader():
     result = run_experiment({"network_type": "CNN", "dataset": "Fashion-MNIST", "epochs": 1, "conv_layers": 1,
                              "base_filters": 4}, image_loader=fake_image_loader(), max_train_samples=100)
     assert result["train_samples"] == 100 and result["class_names"][7] == "Sneaker"
+    assert result["val_samples"] == 20 and result["test_samples"] == 50      # 200 // 10 validation; fake "official test"
 
 
 def test_compact_history():

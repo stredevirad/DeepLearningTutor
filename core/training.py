@@ -225,12 +225,40 @@ def predict_proba(model, X):
     return np.concatenate(out) if out else np.zeros((0, model.output_shape[-1]), np.float32)
 
 
+def per_class_metrics(cm, class_names):
+    """Precision, recall and F1 for every class, read off a confusion matrix
+    (rows = actual class, columns = predicted class).
+
+        precision = correct predictions of the class / everything predicted as the class
+        recall    = correct predictions of the class / everything that really is the class
+        F1        = harmonic mean of the two (0 when both are 0)
+    """
+    cm = np.asarray(cm, dtype=np.float64)
+    correct = np.diag(cm)
+    predicted = cm.sum(axis=0)
+    actual = cm.sum(axis=1)
+    rows = []
+    for i, name in enumerate(class_names):
+        precision = float(correct[i] / predicted[i]) if predicted[i] else 0.0
+        recall = float(correct[i] / actual[i]) if actual[i] else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        rows.append({"class": str(name), "precision": round(precision, 4), "recall": round(recall, 4),
+                     "f1": round(f1, 4), "support": int(actual[i])})
+    return rows
+
+
 def train_model(model, data, cfg, callbacks=None):
     """Fit `model` on prepared data, then evaluate the weights it ends up with.
 
+    Validation data is used DURING training (live curves, early stopping). The test
+    split is evaluated exactly once, here, after training has finished; it supplies
+    the reported accuracy, the confusion matrix and the per-class table. When the
+    data was too small for a test split (data.has_test is False) those come from the
+    validation split instead and "eval_split" says so.
+
     Returns a dict with the Keras history, epoch bookkeeping, final metrics
-    (evaluated on the final weights, not history[-1]), predictions and the
-    confusion matrix.
+    (evaluated on the final weights, not history[-1]), predictions, the
+    confusion matrix and the per-class metrics.
     """
     cbs = list(callbacks or [])
     es = None
@@ -256,8 +284,13 @@ def train_model(model, data, cfg, callbacks=None):
     logits_fn = _logits_function(model)
     train_loss, train_acc, _ = evaluate_split(model, data.X_train, data.y_train, logits_fn)
     val_loss, val_acc, probs = evaluate_split(model, data.X_val, data.y_val, logits_fn)
+    test_loss = test_acc = None
+    eval_split, y_true = "validation", data.y_val
+    if data.has_test:                 # the one and only look at the test split
+        test_loss, test_acc, probs = evaluate_split(model, data.X_test, data.y_test, logits_fn)
+        eval_split, y_true = "test", data.y_test
     y_pred = np.argmax(probs, axis=1)
-    cm = confusion_matrix(data.y_val, y_pred, labels=list(range(data.num_classes)))
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(data.num_classes)))
 
     return {
         "history": h,
@@ -268,9 +301,13 @@ def train_model(model, data, cfg, callbacks=None):
         "final": {
             "train_loss": train_loss, "train_accuracy": train_acc,
             "val_loss": val_loss, "val_accuracy": val_acc,
+            "test_loss": test_loss, "test_accuracy": test_acc,      # None when there is no test split
         },
+        "eval_split": eval_split,             # which split the confusion matrix and per-class table describe
+        "eval_samples": int(len(y_true)),
         "y_pred": y_pred,
         "confusion_matrix": cm,
+        "per_class": per_class_metrics(cm, data.class_names),
     }
 
 
@@ -330,13 +367,19 @@ def run_experiment(raw_config, image_loader=None, max_train_samples=None, max_va
             "final_val_loss": round(final["val_loss"], 4),
             "final_train_accuracy": round(final["train_accuracy"], 4),
             "final_val_accuracy": round(final["val_accuracy"], 4),
+            # Test split: evaluated once, after training. None if the data was too small for one.
+            "final_test_loss": None if final["test_loss"] is None else round(final["test_loss"], 4),
+            "final_test_accuracy": None if final["test_accuracy"] is None else round(final["test_accuracy"], 4),
         },
         "history": {k: [round(float(x), 4) for x in h.get(k, [])] for k in ("loss", "val_loss", "accuracy", "val_accuracy")},
         "history_summary": compact_history(h),
+        "evaluated_on": outcome["eval_split"],      # split behind the confusion matrix and per-class table
         "confusion_matrix": outcome["confusion_matrix"].tolist(),
+        "per_class": outcome["per_class"],
         "parameters": count_parameters(model),
         "train_samples": int(len(data.y_train)),
         "val_samples": int(len(data.y_val)),
+        "test_samples": int(len(data.y_test)) if data.has_test else 0,
         "notes": data.info + data.warnings,
     }
     if return_model:
@@ -347,5 +390,6 @@ def run_experiment(raw_config, image_loader=None, max_train_samples=None, max_va
 __all__ = [
     "ConfigError", "DataError", "DEFAULTS", "LIMITS", "NETWORK_TYPES",
     "validate_config", "set_global_seed", "train_model", "evaluate_split", "predict_proba", "compact_history",
+    "per_class_metrics",
     "prepare_builtin_data", "run_experiment", "summary_text", "datasets_for",
 ]

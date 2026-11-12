@@ -86,8 +86,8 @@ with st.spinner(T("starting_up")):
     from core.image_preprocessing import ImageError, open_image, preprocess_image, style_for_dataset
     from core.models import build_model, count_parameters, model_from_bytes, model_to_bytes, summary_text
     from core.training import (
-        DEFAULTS as TRAINING_DEFAULTS, ConfigError, predict_proba, set_global_seed, train_model,
-        validate_config,
+        DEFAULTS as TRAINING_DEFAULTS, ConfigError, per_class_metrics, predict_proba, set_global_seed,
+        train_model, validate_config,
     )
     from mcp_client import MCPClient
     from tts_engine import generate_training_narrative, performance_verdict, text_to_audio
@@ -98,6 +98,7 @@ logger = logging.getLogger("deep_learning_tutor")
 MAX_CSV_MB, MAX_ZIP_MB, MAX_DOC_MB, MAX_IMAGE_MB, MAX_ATTACHMENT_MB = 25, 100, 20, 10, 10
 MAX_ATTACHMENT_TEXT = 8000
 MAX_KEPT_TEST_IMAGES = 8          # predictions / heatmaps kept per model for quick re-display
+SMALL_TEST_SET = 100              # below this, the result card says how much one wrong prediction moves the accuracy
 BACKEND_GEMINI, BACKEND_OLLAMA = "Gemini (Online)", "Ollama (Offline)"
 LEVELS = ["Beginner", "Intermediate", "Advanced"]
 TAB_IDS = ("train", "viz", "tutor", "test")
@@ -263,6 +264,15 @@ def chart_labels():
 
 def fmt_pct(x):
     return f"{x * 100:.1f}%"
+
+
+def headline_accuracy(final):
+    """(accuracy, measured_on_test) - the number the app reports for a trained model.
+    It is the TEST accuracy; only when the data was too small for a test split is it
+    the validation accuracy (and the UI then says so)."""
+    if final.get("test_accuracy") is not None:
+        return final["test_accuracy"], True
+    return final.get("val_accuracy", 0.0), False
 
 
 # ═══════════════════════════════════════════════
@@ -581,16 +591,19 @@ def prepare_training_data(cfg):
 def store_training_results(cfg, data, meta, model, outcome):
     """Replace the current model and everything derived from it (no stale scaler/class names)."""
     reset_trained_model()
-    n = len(data.y_train) + len(data.y_val)
+    n_test = len(data.y_test) if data.has_test else 0
+    n = len(data.y_train) + len(data.y_val) + n_test
     ss.model_config = {**cfg, "custom_meta": meta, "signature": current_signature,
                        "trained_at": time.strftime("%H:%M:%S"),
                        "data_notes": list(data.info) + list(data.warnings),
                        "data_facts": {"classes": data.num_classes, "samples": n,
-                                      "train": len(data.y_train), "val": len(data.y_val),
+                                      "train": len(data.y_train), "val": len(data.y_val), "test": n_test,
                                       "class_counts": dict(data.class_counts) if cfg.get("using_custom") else {}}}
     ss.history = outcome["history"]
-    ss.training_outcome = {k: outcome[k] for k in ("epochs_run", "best_epoch", "stopped_early", "weights_restored", "final")}
-    ss.confusion_data = {"matrix": np.asarray(outcome["confusion_matrix"]), "class_names": list(data.class_names)}
+    ss.training_outcome = {k: outcome[k] for k in ("epochs_run", "best_epoch", "stopped_early", "weights_restored",
+                                                   "final", "eval_split", "eval_samples", "per_class")}
+    ss.confusion_data = {"matrix": np.asarray(outcome["confusion_matrix"]), "class_names": list(data.class_names),
+                         "split": outcome["eval_split"], "samples": outcome["eval_samples"]}
     ss.model_summary_text = summary_text(model)
     ss.model_params = count_parameters(model)
     ss.trained_model = model
@@ -604,8 +617,10 @@ def store_training_results(cfg, data, meta, model, outcome):
         "image_style": data.image_style,
     }
     if data.kind == "tabular":
-        ss.val_raw = data.X_val_raw
-        ss.val_labels = np.asarray(data.y_val)
+        # Rows offered by "fill in a random example": test rows (never used in training);
+        # validation rows only when the data was too small for a test split.
+        ss.sample_rows = data.X_test_raw if data.has_test else data.X_val_raw
+        ss.sample_labels = np.asarray(data.y_test if data.has_test else data.y_val)
 
 
 def train_remotely(cfg, live, progress):
@@ -633,14 +648,19 @@ def train_remotely(cfg, live, progress):
         data = PreparedData(X_train=np.empty((0, 28, 28, 1)), X_val=np.empty((0, 28, 28, 1)),
                             y_train=np.zeros(res["train_samples"], np.int64), y_val=np.zeros(res["val_samples"], np.int64),
                             class_names=res["class_names"], input_shape=(28, 28, 1), kind="image",
-                            image_style=style_for_dataset(cfg["dataset"]))
+                            image_style=style_for_dataset(cfg["dataset"]),
+                            X_test=np.empty((0, 28, 28, 1)), y_test=np.zeros(res.get("test_samples", 0), np.int64))
     r = res["results"]
     outcome = {
         "history": res["history"], "epochs_run": res["epochs_trained"], "best_epoch": res["best_epoch"],
         "stopped_early": res["stopped_early"], "weights_restored": res["best_epoch"] != res["epochs_trained"],
         "final": {"train_loss": r["final_train_loss"], "train_accuracy": r["final_train_accuracy"],
-                  "val_loss": r["final_val_loss"], "val_accuracy": r["final_val_accuracy"]},
+                  "val_loss": r["final_val_loss"], "val_accuracy": r["final_val_accuracy"],
+                  "test_loss": r.get("final_test_loss"), "test_accuracy": r.get("final_test_accuracy")},
         "confusion_matrix": res["confusion_matrix"],
+        "eval_split": res.get("evaluated_on", "validation"),
+        "eval_samples": int(np.sum(res["confusion_matrix"])),
+        "per_class": res.get("per_class") or per_class_metrics(res["confusion_matrix"], res["class_names"]),
     }
     store_training_results(cfg, data, {}, model, outcome)
     progress.progress(1.0, text=T("mcp_done"))
@@ -711,17 +731,31 @@ def render_result_card():
     params = ss.model_params or {}
     st.markdown(f"#### {T('result_header')}")
     st.caption(T("current_model", desc=describe_config(cfg), time=cfg.get("trained_at", "")))
+    facts = cfg.get("data_facts") or {}
+    accuracy, on_test = headline_accuracy(final)
+    n_test = int(outcome.get("eval_samples") or 0) if on_test else 0
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric(T("metrics_val_acc"), fmt_pct(final.get("val_accuracy", 0.0)), help=T("metrics_val_acc_help"))
-    m2.metric(T("metrics_val_loss"), f"{final.get('val_loss', 0.0):.3f}", help=T("metrics_val_loss_help"))
+    if on_test:       # headline = test accuracy, with the size of the test set beside it
+        m1.metric(T("metrics_test_acc", n=f"{n_test:,}"), fmt_pct(accuracy), help=T("metrics_test_acc_help"))
+        m2.metric(T("metrics_val_acc"), fmt_pct(final.get("val_accuracy", 0.0)), help=T("metrics_val_acc_help"))
+    else:             # data too small for a test split: say clearly that this is a validation number
+        m1.metric(T("metrics_val_acc"), fmt_pct(accuracy), help=T("metrics_val_acc_help"))
+        m2.metric(T("metrics_val_loss"), f"{final.get('val_loss', 0.0):.3f}", help=T("metrics_val_loss_help"))
     m3.metric(T("metrics_epochs"), f"{outcome.get('epochs_run', 0)} / {cfg.get('epochs')}")
     m4.metric(T("metrics_params"), f"{params.get('total', 0):,}")
     notes = []
+    if on_test:
+        notes.append(T("split_note", train=f"{facts.get('train', 0):,}", val=f"{facts.get('val', 0):,}",
+                       test=f"{n_test:,}"))
+        if 0 < n_test < SMALL_TEST_SET:
+            notes.append(T("small_test_note", n=n_test, step=f"{100 / n_test:.1f}"))
+    else:
+        st.warning(T("no_test_note", train=f"{facts.get('train', 0):,}", val=f"{facts.get('val', 0):,}"))
     if outcome.get("weights_restored"):
         notes.append(T("weights_restored_note", best=outcome["best_epoch"], run=outcome["epochs_run"]))
     if cfg.get("dataset") in BENCHMARKS:
         lo, hi, _ = BENCHMARKS[cfg["dataset"]]
-        tier, _ = performance_verdict(cfg["dataset"], final.get("val_accuracy", 0.0))
+        tier, _ = performance_verdict(cfg["dataset"], accuracy)
         notes.append(T(f"verdict_{tier}", dataset=cfg["dataset"], lo=f"{lo:.0%}", hi=f"{hi:.1%}"))
     gap = final.get("train_accuracy", 0.0) - final.get("val_accuracy", 0.0)
     if gap > 0.1:
@@ -808,9 +842,15 @@ def render_viz_tab():
     final = outcome.get("final") or {}
     if model_is_stale:
         st.warning(T("config_changed_warning"))
-    st.caption(T("viz_summary", ds=cfg.get("dataset"), net=cfg.get("network_type"),
-                 acc=fmt_pct(final.get("val_accuracy", 0.0)), loss=f"{final.get('val_loss', 0.0):.3f}",
-                 run=outcome.get("epochs_run"), epochs=cfg.get("epochs")))
+    accuracy, on_test = headline_accuracy(final)
+    if on_test:
+        st.caption(T("viz_summary", ds=cfg.get("dataset"), net=cfg.get("network_type"), acc=fmt_pct(accuracy),
+                     n=f"{int(outcome.get('eval_samples') or 0):,}", val_acc=fmt_pct(final.get("val_accuracy", 0.0)),
+                     run=outcome.get("epochs_run"), epochs=cfg.get("epochs")))
+    else:
+        st.caption(T("viz_summary_val", ds=cfg.get("dataset"), net=cfg.get("network_type"), acc=fmt_pct(accuracy),
+                     loss=f"{final.get('val_loss', 0.0):.3f}", run=outcome.get("epochs_run"),
+                     epochs=cfg.get("epochs")))
     labels = chart_labels()
     loss, acc = history_charts(ss.history, labels, best_epoch=outcome.get("best_epoch"))
     c1, c2 = st.columns(2)
@@ -823,7 +863,9 @@ def render_viz_tab():
     if ss.confusion_data:
         c1, c2 = st.columns([3, 2])
         with c1:
-            st.markdown(f"**{T('confusion_title')}**")
+            cm_split = T("cm_on_test" if ss.confusion_data.get("split") == "test" else "cm_on_val",
+                         n=f"{int(np.sum(ss.confusion_data['matrix'])):,}")
+            st.markdown(f"**{T('confusion_title')}** ({cm_split})")
             st.altair_chart(confusion_chart(ss.confusion_data["matrix"], ss.confusion_data["class_names"], labels),
                             width="content")
         with c2:
@@ -1264,15 +1306,16 @@ def render_tabular_test(model, class_names, prep):
     def key_for(i):
         return f"feat_{version}_{i}"
 
-    if st.button(T("fill_random"), key=f"fill_random_{version}"):
-        val_raw = ss.get("val_raw")
-        if val_raw is not None and len(val_raw):
-            idx = int(np.random.default_rng().integers(0, len(val_raw)))
-            row = val_raw.iloc[idx]
+    from_test = (ss.training_outcome or {}).get("eval_split") == "test"
+    if st.button(T("fill_random" if from_test else "fill_random_val"), key=f"fill_random_{version}"):
+        sample_rows = ss.get("sample_rows")
+        if sample_rows is not None and len(sample_rows):
+            idx = int(np.random.default_rng().integers(0, len(sample_rows)))
+            row = sample_rows.iloc[idx]
             for i, col in enumerate(feature_columns):
                 values[col] = str(row[col]) if col in categorical else float(row[col])
                 ss[key_for(i)] = values[col]
-            ss["_test_sample_label"] = int(ss.val_labels[idx])
+            ss["_test_sample_label"] = int(ss.sample_labels[idx])
     sample_label = ss.get("_test_sample_label")
     if sample_label is not None and 0 <= sample_label < len(class_names):
         st.info(T("sample_actual", cls=class_names[sample_label]))

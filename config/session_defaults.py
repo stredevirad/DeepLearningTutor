@@ -25,8 +25,8 @@ TRAINED_MODEL_KEYS = {
     "model_params": None,
     "data_prep": None,
     "class_names": None,
-    "val_raw": None,
-    "val_labels": None,
+    "sample_rows": None,       # un-scaled held-out rows for "fill in a random example" (test rows if there are any)
+    "sample_labels": None,
     "narratives": {},          # (language, level) -> AI Professor review text
     "narrative_audio": {},     # (language, level) -> MP3 bytes (made only when "Listen" is clicked)
     "test_image": None,        # the image being tested: {"sha", "name", "bytes"}

@@ -159,13 +159,21 @@ def test_train_iris_and_every_tab_renders():
     train(at)
 
     metrics = {m.label: m.value for m in at.metric}
-    assert set(metrics) == {"Validation accuracy", "Validation loss", "Epochs trained", "Parameters"}
+    # The headline is the accuracy on the 22 held-out test rows; its size is shown beside it.
+    assert set(metrics) == {"Test accuracy (22 examples)", "Validation accuracy", "Epochs trained", "Parameters"}
     assert metrics["Epochs trained"] == "10 / 10" and metrics["Parameters"] == "403"
+    final = at.session_state["training_outcome"]["final"]
+    assert metrics["Test accuracy (22 examples)"] == f"{final['test_accuracy'] * 100:.1f}%"
+    assert metrics["Validation accuracy"] == f"{final['val_accuracy'] * 100:.1f}%"
     assert "typical range for Iris" in texts(at.caption)
+    assert "106 training · 22 validation" in texts(at.caption) and "22 test" in texts(at.caption)
+    assert "too small for a separate test set" not in texts(at.warning)   # that note is for tiny datasets only
 
     open_tab(at, VIZ)
     assert len(charts(at)) == 3                              # loss, accuracy, confusion matrix
     assert "Most frequent mistake" in texts(at.markdown) or "No mistakes" in texts(at.markdown)
+    assert "(test set, 22 examples)" in texts(at.markdown)
+    assert int(at.session_state["confusion_data"]["matrix"].sum()) == 22
     assert "Add a Gemini key or start Ollama" in texts(at.caption)   # no AI configured: no review button
 
     # Test & Export: model download reloads, code is leak-free and matches the config.
@@ -227,7 +235,8 @@ def test_malayalam_ui():
     assert "ഡീപ് ലേണിംഗ് ട്യൂട്ടർ" in texts(at.title)
     at.slider(key="epochs_nn").set_value(10)
     train(at)
-    assert "വാലിഡേഷൻ കൃത്യത" in [m.label for m in at.metric]
+    labels = [m.label for m in at.metric]
+    assert "വാലിഡേഷൻ കൃത്യത" in labels and "ടെസ്റ്റ് കൃത്യത (22 ഉദാഹരണങ്ങൾ)" in labels
 
 
 def test_next_step_buttons_switch_tabs():
@@ -331,8 +340,29 @@ def test_custom_zip_training():
     at.slider(key="epochs_cnn").set_value(5)
     train(at)
     assert at.session_state["class_names"] == ["circle", "square"]
+    # 16 images -> 12 train / 2 validation / 2 test: a real but tiny test set, and the card says so.
+    assert "Test accuracy (2 examples)" in [m.label for m in at.metric]
+    assert "Only 2 test examples" in texts(at.caption)
     open_tab(at, TEST)
     assert "CLASS_NAMES = ['circle', 'square']" in texts(at.code)
+
+
+def test_tiny_dataset_without_test_split_is_labelled_validation():
+    """9 rows in 3 classes cannot fill three splits: the app falls back to train/validation
+    and says clearly that the number is a validation accuracy."""
+    df = pd.DataFrame({"a": np.arange(9.0), "b": np.arange(9.0) % 4, "t": ["x", "y", "z"] * 3})
+    at = new_app()
+    at.file_uploader(key="custom_csv_upload").upload("tiny.csv", df.to_csv(index=False).encode(), "text/csv").run(timeout=TIMEOUT)
+    at.slider(key="epochs_nn").set_value(10)
+    train(at)
+    labels = [m.label for m in at.metric]
+    assert "Validation accuracy" in labels and not any(label.startswith("Test accuracy") for label in labels)
+    assert "too small for a separate test set" in texts(at.warning)
+    assert at.session_state["training_outcome"]["final"]["test_accuracy"] is None
+    open_tab(at, VIZ)
+    assert "(validation set, " in texts(at.markdown)
+    open_tab(at, TEST)
+    assert at.button(key=f"fill_random_{at.session_state['model_version']}").label == "Fill in a random validation example"
 
 
 def test_bad_zip_shows_friendly_error():

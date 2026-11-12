@@ -18,9 +18,12 @@ def test_run_experiment_simple_nn():
     r = T.run_experiment(network_type="Simple NN", dataset="Iris", epochs=2, hidden_layers=1, nodes_per_layer=8)
     assert r["status"] == "success", r
     json.dumps(r)
-    assert set(r["results"]) == {"final_train_loss", "final_val_loss", "final_train_accuracy", "final_val_accuracy"}
+    assert set(r["results"]) == {"final_train_loss", "final_val_loss", "final_train_accuracy", "final_val_accuracy",
+                                 "final_test_loss", "final_test_accuracy"}
     assert len(r["history"]["loss"]) == r["epochs_trained"] == 2
     assert np.array(r["confusion_matrix"]).shape == (3, 3)
+    # The confusion matrix describes the held-out test rows (22 of Iris's 150).
+    assert r["evaluated_on"] == "test" and r["test_samples"] == 22 == int(np.sum(r["confusion_matrix"]))
 
 
 @pytest.mark.slow

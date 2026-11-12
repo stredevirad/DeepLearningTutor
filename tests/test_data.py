@@ -22,21 +22,28 @@ def test_builtin_tabular_split_then_scale(name, n_features, n_classes):
     assert data.kind == "tabular"
     assert data.X_train.shape[1] == n_features == data.input_shape[0]
     assert data.num_classes == n_classes
-    assert len(data.X_val) == int(np.ceil((len(data.X_train) + len(data.X_val)) * 0.2))
-    assert data.stratified
+    # 70 / 15 / 15: 15 % of all rows (a whole number) each for test and validation, the rest for training.
+    n = len(data.X_train) + len(data.X_val) + len(data.X_test)
+    assert len(data.X_test) == round(n * D.TEST_FRACTION) and len(data.X_val) == round(n * D.VAL_FRACTION)
+    assert 0.69 <= len(data.X_train) / n <= 0.71
+    assert data.stratified and data.has_test
     # The scaler was fitted on the training rows only: train columns are exactly
-    # standardised, validation columns are not (they were only transformed).
+    # standardised, validation and test columns are not (they were only transformed).
     varying = data.X_train.std(axis=0) > 1e-6
     np.testing.assert_allclose(data.X_train[:, varying].mean(axis=0), 0, atol=1e-5)
     np.testing.assert_allclose(data.X_train[:, varying].std(axis=0), 1, atol=1e-3)
     assert not np.allclose(data.X_val[:, varying].mean(axis=0), 0, atol=1e-5)
-    # Raw (unscaled) validation rows are kept for the Test tab and match the scaled ones.
+    assert not np.allclose(data.X_test[:, varying].mean(axis=0), 0, atol=1e-5)
+    # Raw (unscaled) held-out rows are kept for the Test tab and match the scaled ones.
     np.testing.assert_allclose(D.transform_rows(data, data.X_val_raw), data.X_val, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(D.transform_rows(data, data.X_test_raw), data.X_test, rtol=1e-5, atol=1e-5)
 
 
 def test_stratified_split_keeps_class_proportions():
-    data = D.prepare_builtin_tabular("Iris", seed=0)
-    assert np.bincount(data.y_val).tolist() == [10, 10, 10]
+    data = D.prepare_builtin_tabular("Iris", seed=0)             # 150 rows, 50 per class -> 106 / 22 / 22
+    assert sorted(np.bincount(data.y_train).tolist()) == [35, 35, 36]
+    assert sorted(np.bincount(data.y_val).tolist()) == [7, 7, 8]
+    assert sorted(np.bincount(data.y_test).tolist()) == [7, 7, 8]
 
 
 def test_split_is_reproducible_with_seed():
@@ -44,15 +51,106 @@ def test_split_is_reproducible_with_seed():
     b = D.prepare_builtin_tabular("Wine", seed=7)
     c = D.prepare_builtin_tabular("Wine", seed=8)
     np.testing.assert_array_equal(a.y_val, b.y_val)
-    assert not np.array_equal(a.y_val, c.y_val)
+    np.testing.assert_array_equal(a.split_indices["test"], b.split_indices["test"])
+    assert not np.array_equal(a.split_indices["test"], c.split_indices["test"])
+
+
+# ─────────────────────────── train / validation / test never overlap ───────────────────────────
+
+def _assert_disjoint_and_complete(parts, n_rows):
+    train, val, test = (set(parts[k].tolist()) for k in ("train", "val", "test"))
+    assert not (train & val) and not (train & test) and not (val & test)
+    assert train | val | test == set(range(n_rows))
+    assert len(train) + len(val) + len(test) == n_rows           # no row is used twice inside a split either
+
+
+@pytest.mark.parametrize("name", ["Iris", "Wine", "Breast Cancer", "Digits"])
+@pytest.mark.parametrize("seed", [0, 42])
+def test_three_splits_share_no_rows_builtin(name, seed):
+    X, _, _ = D.load_builtin_tabular(name)
+    data = D.prepare_builtin_tabular(name, seed=seed)
+    _assert_disjoint_and_complete(data.split_indices, len(X))
+    for part, y in (("train", data.y_train), ("val", data.y_val), ("test", data.y_test)):
+        assert len(data.split_indices[part]) == len(y)
+
+
+def test_three_splits_share_no_rows_checked_on_the_values_themselves():
+    """Independent of split_indices: every row carries a unique number, and the numbers
+    that end up in the three prepared arrays never repeat."""
+    n = 200
+    X = pd.DataFrame({"row_id": np.arange(n, dtype=float), "noise": np.random.default_rng(1).normal(size=n)})
+    y = np.arange(n) % 4
+    data = D.prepare_tabular(X, y, ["a", "b", "c", "d"], seed=3)
+    scaler = data.preprocessor.named_transformers_["num"]
+    ids = [set(np.rint(scaler.inverse_transform(part)[:, 0]).astype(int).tolist())
+           for part in (data.X_train, data.X_val, data.X_test)]
+    assert not (ids[0] & ids[1]) and not (ids[0] & ids[2]) and not (ids[1] & ids[2])
+    assert ids[0] | ids[1] | ids[2] == set(range(n))
+    assert ids[1] == set(data.X_val_raw["row_id"].astype(int)) and ids[2] == set(data.X_test_raw["row_id"].astype(int))
+    assert [len(i) for i in ids] == [140, 30, 30]
+
+
+def test_scaler_and_encoder_are_fitted_on_training_rows_only():
+    """Every row has its own number and its own category. After preparing the data, the
+    scaler's mean is the mean of the TRAINING rows only and the one-hot encoder knows
+    exactly the TRAINING rows' categories - nothing from validation or test."""
+    n = 120
+    X = pd.DataFrame({"value": np.arange(n, dtype=float) ** 2, "tag": [f"row{i}" for i in range(n)]})
+    y = np.arange(n) % 3
+    data = D.prepare_tabular(X, y, ["a", "b", "c"], seed=5, categorical_columns=["tag"])
+    train_rows = np.sort(data.split_indices["train"])
+    other_rows = np.concatenate([data.split_indices["val"], data.split_indices["test"]])
+
+    scaler = data.preprocessor.named_transformers_["num"]
+    assert scaler.n_samples_seen_ == len(train_rows)
+    assert scaler.mean_[0] == pytest.approx(X["value"].to_numpy()[train_rows].mean())
+    assert scaler.mean_[0] != pytest.approx(X["value"].mean())                 # not the mean of all rows
+
+    encoder = data.preprocessor.named_transformers_["cat"]
+    assert set(encoder.categories_[0]) == {f"row{i}" for i in train_rows}
+    assert not set(encoder.categories_[0]) & {f"row{i}" for i in other_rows}
+    # A category the encoder never saw becomes an all-zero one-hot block (no crash, no leak).
+    assert np.allclose(data.X_val[:, 1:], 0) and np.allclose(data.X_test[:, 1:], 0)
+
+
+def test_fit_is_called_once_with_training_rows_only(monkeypatch):
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+    seen = {"scaler": [], "encoder": []}
+    real_scaler_fit, real_encoder_fit = StandardScaler.fit, OneHotEncoder.fit
+
+    def scaler_fit(self, X, y=None, **kw):
+        seen["scaler"].append(len(X))
+        return real_scaler_fit(self, X, y, **kw)
+
+    def encoder_fit(self, X, y=None, **kw):
+        seen["encoder"].append(len(X))
+        return real_encoder_fit(self, X, y, **kw)
+
+    monkeypatch.setattr(StandardScaler, "fit", scaler_fit)
+    monkeypatch.setattr(OneHotEncoder, "fit", encoder_fit)
+    df = pd.DataFrame({"size": np.linspace(0, 1, 90), "colour": ["red", "green", "blue"] * 30, "target": [0, 1] * 45})
+    data = D.prepare_custom_csv(df, "target")
+    assert seen == {"scaler": [len(data.y_train)], "encoder": [len(data.y_train)]}
+    assert len(data.y_train) < 90 and data.has_test
+
+
+def test_too_small_for_a_test_split_falls_back_to_train_and_validation():
+    X = pd.DataFrame({"f": np.arange(9, dtype=float)})
+    y = np.array([0, 0, 0, 1, 1, 1, 2, 2, 2])                    # 15 % of 9 rows cannot hold 3 classes
+    data = D.prepare_tabular(X, y, ["a", "b", "c"])
+    assert not data.has_test and data.X_test is None and data.y_test is None
+    assert set(data.split_indices) == {"train", "val"}
+    assert len(data.y_train) + len(data.y_val) == 9
+    assert D.NO_TEST_SET_NOTE in data.warnings
 
 
 def test_stratify_falls_back_when_a_class_has_one_sample():
     X = pd.DataFrame({"f": np.arange(20, dtype=float)})
     y = np.array([0] * 10 + [1] * 9 + [2])
     data = D.prepare_tabular(X, y, ["a", "b", "c"])
-    assert not data.stratified
+    assert not data.stratified and not data.has_test             # one example cannot be in three splits
     assert any("stratified" in w for w in data.warnings)
+    assert D.NO_TEST_SET_NOTE in data.warnings
 
 
 def test_unknown_builtin_dataset():
@@ -64,8 +162,12 @@ def test_unknown_builtin_dataset():
 
 @pytest.mark.parametrize("name", ["MNIST", "Fashion-MNIST"])
 def test_builtin_images_normalised_with_channel(name):
-    data = D.prepare_builtin_images(name, loader=fake_image_loader())
-    assert data.X_train.shape == (200, 28, 28, 1) and data.X_val.shape == (50, 28, 28, 1)
+    data = D.prepare_builtin_images(name, loader=fake_image_loader())     # 200 "official train", 50 "official test"
+    # One tenth of the official training images becomes validation; the official test set stays the test set.
+    assert data.X_train.shape == (180, 28, 28, 1) and data.X_val.shape == (20, 28, 28, 1)
+    assert data.X_test.shape == (50, 28, 28, 1) and data.has_test
+    train, val = set(data.split_indices["train"].tolist()), set(data.split_indices["val"].tolist())
+    assert not train & val and train | val == set(range(200))
     assert data.X_train.dtype == np.float32
     assert 0.0 <= data.X_train.min() and data.X_train.max() <= 1.0
     assert data.num_classes == 10
@@ -78,6 +180,18 @@ def test_builtin_images_subset():
     data = D.prepare_builtin_images("MNIST", loader=fake_image_loader(), max_train_samples=64, max_val_samples=16)
     assert len(data.X_train) == 64 and len(data.X_val) == 16
     assert any("subset" in m for m in data.info)
+
+
+def test_builtin_images_validation_comes_from_the_training_set_not_the_test_set():
+    """The fake 'official test' images are all white and the 'official train' images all
+    black, so any test image that leaked into train or validation would be visible."""
+    def load():
+        return ((np.zeros((100, 28, 28), np.uint8), (np.arange(100) % 10).astype(np.uint8)),
+                (np.full((30, 28, 28), 255, np.uint8), (np.arange(30) % 10).astype(np.uint8)))
+    data = D.prepare_builtin_images("MNIST", loader=load)
+    assert data.X_train.max() == 0.0 and data.X_val.max() == 0.0 and data.X_test.min() == 1.0
+    assert (len(data.X_train), len(data.X_val), len(data.X_test)) == (90, 10, 30)
+    assert np.bincount(data.y_val).tolist() == [1] * 10          # stratified: one validation image per class
 
 
 def test_unknown_image_dataset():
@@ -132,7 +246,7 @@ def test_csv_nans_are_counted_not_silent():
     df.loc[4, "b"] = "oops"                                  # non-numeric value in numeric column
     df.loc[5, "t"] = np.nan                                  # missing target
     data = D.prepare_custom_csv(D.read_csv_upload(_csv(df)), "t")
-    assert len(data.y_train) + len(data.y_val) == 30 - 5
+    assert len(data.y_train) + len(data.y_val) + len(data.y_test) == 30 - 5
     assert any("4 row(s)" in w for w in data.warnings)       # 3 NaN + 1 non-numeric
     assert any("target" in w for w in data.warnings)
 
@@ -269,8 +383,12 @@ def test_zip_temp_dir_is_cleaned_up(monkeypatch):
 def test_prepare_image_arrays_stratified():
     X, y, class_names, _ = D.load_image_zip(class_zip(per_class=10))
     data = D.prepare_image_arrays(X, y, class_names)
-    assert data.input_shape == (28, 28, 1)
-    assert sorted(np.bincount(data.y_val).tolist()) == [2, 2]
+    assert data.input_shape == (28, 28, 1)                        # 20 images -> 14 train / 3 validation / 3 test
+    assert sorted(np.bincount(data.y_train).tolist()) == [7, 7]
+    assert sorted(np.bincount(data.y_val).tolist()) == [1, 2]
+    assert sorted(np.bincount(data.y_test).tolist()) == [1, 2]
+    parts = [set(data.split_indices[k].tolist()) for k in ("train", "val", "test")]
+    assert not (parts[0] & parts[1]) and not (parts[0] & parts[2]) and not (parts[1] & parts[2])
 
 
 # ─────────────────────────── pre-training summaries ───────────────────────────

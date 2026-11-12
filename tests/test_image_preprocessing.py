@@ -159,7 +159,11 @@ def test_sample_predictions_are_sensible(dataset, cache_name):
     if not _cached(cache_name):
         pytest.skip(f"{dataset} is not cached locally (tests never download data)")
     from core.training import run_experiment
-    _, model, data = run_experiment({"network_type": "CNN", "dataset": dataset, "epochs": 2, "conv_layers": 2,
+    # 3 epochs: the validation images now come out of the official training set, so this
+    # 20,000-image subset is drawn from 54,000 images. With 2 epochs the out-of-distribution
+    # sneaker check below sat on the boundary (rank 2-4 depending on the seed); with 3 epochs
+    # it held for every seed tried. The assertions themselves are unchanged.
+    _, model, data = run_experiment({"network_type": "CNN", "dataset": dataset, "epochs": 3, "conv_layers": 2,
                                      "base_filters": 16, "batch_size": 64},
                                     max_train_samples=20_000, max_val_samples=2_000, return_model=True)
     for name, (style, expected, ds) in SAMPLES.items():

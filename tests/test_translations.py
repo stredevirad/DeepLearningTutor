@@ -17,7 +17,7 @@ DYNAMIC_KEYS = (       # keys the code builds at run time (f-strings, ternaries,
     + ["sample_seven", "sample_sneaker", "sample_boot", "explain_cm", "why_overfit", "suggest_improve",
        "net_simple", "net_cnn"]
     + ["backend_gemini", "backend_ollama", "kb_keyword_hint", "kb_keyword_hint_ollama",
-       "dataset_help_cnn", "epochs_help_cnn"]
+       "dataset_help_cnn", "epochs_help_cnn", "cm_on_val", "fill_random_val"]
 )
 
 

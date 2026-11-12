@@ -3,9 +3,15 @@ Dataset Loading & Preprocessing
 ===============================
 One leakage-free pipeline shared by the app, the agent tools and the MCP server:
 
-    1. split the data into train / validation (stratified by class),
+    1. split the data into train / validation / test (stratified by class),
     2. fit the preprocessing (StandardScaler, one-hot encoder) on the TRAIN split only,
-    3. apply that fitted preprocessing to the validation split and to live predictions.
+    3. apply that fitted preprocessing to the other splits and to live predictions.
+
+What each split is for:
+    train        the model learns from these rows;
+    validation   drives the live curves and early stopping (so it influences the model);
+    test         evaluated once, after training, for the reported accuracy. Nothing is
+                 ever chosen by looking at it.
 
 Also contains the custom CSV analysis and the safe custom-ZIP image loader.
 """
@@ -30,8 +36,18 @@ TABULAR_DATASETS = ("Iris", "Wine", "Breast Cancer", "Digits")
 IMAGE_DATASETS = ("MNIST", "Fashion-MNIST")
 FASHION_CLASSES = ["T-shirt", "Trouser", "Pullover", "Dress", "Coat",
                    "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"]
-VAL_FRACTION = 0.2
+# Tables and custom uploads: a stratified 70 / 15 / 15 split.
+VAL_FRACTION = 0.15
+TEST_FRACTION = 0.15
+# Too little data for three parts: the older two-way split (80 % train / 20 % validation).
+FALLBACK_VAL_FRACTION = 0.2
+# MNIST / Fashion-MNIST: one tenth of the official 60,000 training images (6,000) becomes
+# the validation set, 54,000 remain for training; the official 10,000 test images are the test set.
+IMAGE_VAL_DIVISOR = 10
 DEFAULT_SEED = 42
+NO_TEST_SET_NOTE = ("The dataset is too small for a separate test set (every class needs examples in the "
+                    "training, validation and test parts), so it was split into training and validation only "
+                    "(80/20). The reported accuracy is a validation accuracy.")
 
 # --- Custom CSV limits ---
 MAX_CSV_BYTES = 25 * 1024 * 1024
@@ -73,17 +89,62 @@ class PreparedData:
     class_counts: dict = field(default_factory=dict)
     stratified: bool = True
     image_style: str = None                     # "digit" / "object" for image models
+    X_test: np.ndarray = None                   # held-out test split; None when the data is too small for one
+    y_test: np.ndarray = None
+    X_test_raw: object = None                   # un-scaled test rows (DataFrame) for the Test tab
+    split_indices: dict = field(default_factory=dict)        # "train" / "val" / "test" -> row numbers in the source data
 
     @property
     def num_classes(self):
         return len(self.class_names)
+
+    @property
+    def has_test(self):
+        return self.y_test is not None and len(self.y_test) > 0
 
 
 # ═══════════════════════════════════════════════
 # Splitting
 # ═══════════════════════════════════════════════
 
-def stratified_split(X, y, seed=DEFAULT_SEED, test_size=VAL_FRACTION):
+def three_way_split(y, seed=DEFAULT_SEED):
+    """Row numbers for a stratified train / validation / test split (70 / 15 / 15).
+
+    Returns (train, val, test) index arrays, or None when the data is too small for
+    every class to appear in all three parts. The two train_test_split calls are the
+    same two calls the exported script makes (core/codegen.py), so that script
+    reproduces exactly these rows.
+    """
+    y = np.asarray(y)
+    rows = np.arange(len(y))
+    # Whole numbers of rows (15 % each), so no floating-point rounding decides a split size.
+    n_test, n_val = round(TEST_FRACTION * len(y)), round(VAL_FRACTION * len(y))
+    try:
+        rest, test = train_test_split(rows, test_size=n_test, random_state=seed, stratify=y)
+        train, val = train_test_split(rest, test_size=n_val, random_state=seed, stratify=y[rest])
+    except ValueError:          # scikit-learn: a class has too few members, or a part would be empty
+        return None
+    n_classes = len(np.unique(y))
+    if any(len(np.unique(y[part])) < n_classes for part in (train, val, test)):
+        return None
+    return train, val, test
+
+
+def split_rows(y, seed=DEFAULT_SEED):
+    """Decide which rows go into which split.
+
+    Returns (parts, stratified, warnings). `parts` maps "train", "val" and - unless the
+    data is too small - "test" to arrays of row numbers that never overlap.
+    """
+    three = three_way_split(y, seed)
+    if three is not None:
+        return {"train": three[0], "val": three[1], "test": three[2]}, True, []
+    rows = np.arange(len(y))
+    train, val, _, _, stratified, warning = stratified_split(rows, y, seed=seed)
+    return {"train": train, "val": val}, stratified, [NO_TEST_SET_NOTE] + ([warning] if warning else [])
+
+
+def stratified_split(X, y, seed=DEFAULT_SEED, test_size=FALLBACK_VAL_FRACTION):
     """Stratified train/validation split, falling back to a plain random split
     when stratification is impossible (a class with < 2 samples, or fewer
     validation slots than classes). Returns (X_tr, X_val, y_tr, y_val, stratified, warning)."""
@@ -136,11 +197,15 @@ def prepare_tabular(X_df, y, class_names, seed=DEFAULT_SEED, categorical_columns
     """Split FIRST, then fit the preprocessing on the training rows only."""
     categorical_columns = [c for c in categorical_columns if c in X_df.columns]
     numeric_columns = [c for c in X_df.columns if c not in categorical_columns]
+    y = np.asarray(y, dtype=np.int64)
 
-    X_tr_df, X_val_df, y_tr, y_val, stratified, split_warning = stratified_split(X_df, y, seed=seed)
+    parts, stratified, split_warnings = split_rows(y, seed)
+    X_tr_df, X_val_df = X_df.iloc[parts["train"]], X_df.iloc[parts["val"]]
+    X_test_df = X_df.iloc[parts["test"]] if "test" in parts else None
     preprocessor = make_tabular_preprocessor(numeric_columns, categorical_columns)
     X_train = preprocessor.fit_transform(X_tr_df).astype(np.float32)   # fit on train only
-    X_val = preprocessor.transform(X_val_df).astype(np.float32)        # transform val
+    X_val = preprocessor.transform(X_val_df).astype(np.float32)        # transform validation
+    X_test = preprocessor.transform(X_test_df).astype(np.float32) if X_test_df is not None else None
 
     levels = {c: sorted(str(v) for v in X_tr_df[c].dropna().unique()) for c in categorical_columns}
     defaults = {}
@@ -151,15 +216,16 @@ def prepare_tabular(X_df, y, class_names, seed=DEFAULT_SEED, categorical_columns
             defaults[c] = float(X_tr_df[c].median())
 
     data = PreparedData(
-        X_train=X_train, X_val=X_val,
-        y_train=np.asarray(y_tr, dtype=np.int64), y_val=np.asarray(y_val, dtype=np.int64),
+        X_train=X_train, X_val=X_val, y_train=y[parts["train"]], y_val=y[parts["val"]],
         class_names=list(class_names), input_shape=(X_train.shape[1],), kind="tabular",
         preprocessor=preprocessor, feature_columns=list(X_df.columns), categorical_levels=levels,
         X_val_raw=X_val_df.reset_index(drop=True), feature_defaults=defaults,
         class_counts=_class_counts(y, class_names), stratified=stratified,
+        X_test=X_test, y_test=y[parts["test"]] if "test" in parts else None,
+        X_test_raw=X_test_df.reset_index(drop=True) if X_test_df is not None else None,
+        split_indices=parts,
     )
-    if split_warning:
-        data.warnings.append(split_warning)
+    data.warnings.extend(split_warnings)
     return data
 
 
@@ -361,8 +427,9 @@ def _imbalance_warning(class_counts):
 # ═══════════════════════════════════════════════
 
 def load_builtin_images(name, loader=None):
-    """Return (X_train, y_train, X_val, y_val, class_names) for MNIST / Fashion-MNIST,
-    normalised to [0, 1] with a channel axis. `loader` lets the app pass a cached loader."""
+    """Return (X_train, y_train, X_test, y_test, class_names) for MNIST / Fashion-MNIST:
+    the official training and test sets, normalised to [0, 1] with a channel axis.
+    `loader` lets the app pass a cached loader."""
     import tensorflow as tf
     if name == "MNIST":
         load = loader or tf.keras.datasets.mnist.load_data
@@ -372,28 +439,37 @@ def load_builtin_images(name, loader=None):
         class_names = list(FASHION_CLASSES)
     else:
         raise DataError(f"Unknown image dataset '{name}'. Choose one of: {', '.join(IMAGE_DATASETS)}.")
-    (X_train, y_train), (X_val, y_val) = load()
+    (X_train, y_train), (X_test, y_test) = load()
     X_train = (X_train.astype(np.float32) / 255.0)[..., np.newaxis]
-    X_val = (X_val.astype(np.float32) / 255.0)[..., np.newaxis]
-    return X_train, np.asarray(y_train, np.int64), X_val, np.asarray(y_val, np.int64), class_names
+    X_test = (X_test.astype(np.float32) / 255.0)[..., np.newaxis]
+    return X_train, np.asarray(y_train, np.int64), X_test, np.asarray(y_test, np.int64), class_names
 
 
 def prepare_builtin_images(name, loader=None, max_train_samples=None, max_val_samples=None, seed=DEFAULT_SEED):
-    X_train, y_train, X_val, y_val, class_names = load_builtin_images(name, loader)
+    """MNIST / Fashion-MNIST as train / validation / test.
+
+    The validation images are taken from the official TRAINING set (6,000 of the 60,000,
+    stratified, chosen by the seed), which leaves 54,000 for training. The official test
+    set (10,000 images) stays untouched until the final evaluation.
+    """
+    X_full, y_full, X_test, y_test, class_names = load_builtin_images(name, loader)
+    rows = np.arange(len(y_full))
+    n_val = len(rows) // IMAGE_VAL_DIVISOR
+    train, val = train_test_split(rows, test_size=n_val, random_state=seed,
+                                  stratify=y_full if n_val >= len(class_names) else None)
     rng = np.random.default_rng(seed)
     note = None
-    if max_train_samples and len(X_train) > max_train_samples:
-        idx = rng.choice(len(X_train), max_train_samples, replace=False)
-        X_train, y_train = X_train[idx], y_train[idx]
+    if max_train_samples and len(train) > max_train_samples:
+        train = rng.choice(train, max_train_samples, replace=False)
         note = f"Trained on a random subset of {max_train_samples:,} training images to keep the experiment quick."
-    if max_val_samples and len(X_val) > max_val_samples:
-        idx = rng.choice(len(X_val), max_val_samples, replace=False)
-        X_val, y_val = X_val[idx], y_val[idx]
+    if max_val_samples and len(val) > max_val_samples:
+        val = rng.choice(val, max_val_samples, replace=False)
     data = PreparedData(
-        X_train=X_train, X_val=X_val, y_train=y_train, y_val=y_val,
+        X_train=X_full[train], X_val=X_full[val], y_train=y_full[train], y_val=y_full[val],
         class_names=class_names, input_shape=(28, 28, 1), kind="image",
-        class_counts=_class_counts(np.concatenate([y_train, y_val]), class_names),
+        class_counts=_class_counts(np.concatenate([y_full, y_test]), class_names),
         image_style="digit" if name == "MNIST" else "object",
+        X_test=X_test, y_test=y_test, split_indices={"train": train, "val": val},
     )
     if note:
         data.info.append(note)
@@ -401,15 +477,17 @@ def prepare_builtin_images(name, loader=None, max_train_samples=None, max_val_sa
 
 
 def prepare_image_arrays(X, y, class_names, seed=DEFAULT_SEED, image_style="object"):
-    """Stratified split of an in-memory image dataset (e.g. from a custom ZIP)."""
-    X_tr, X_val, y_tr, y_val, stratified, warning = stratified_split(X, y, seed=seed)
+    """Stratified train / validation / test split of an in-memory image dataset (e.g. from a custom ZIP)."""
+    y = np.asarray(y, dtype=np.int64)
+    parts, stratified, split_warnings = split_rows(y, seed)
     data = PreparedData(
-        X_train=X_tr, X_val=X_val, y_train=np.asarray(y_tr, np.int64), y_val=np.asarray(y_val, np.int64),
+        X_train=X[parts["train"]], X_val=X[parts["val"]], y_train=y[parts["train"]], y_val=y[parts["val"]],
         class_names=list(class_names), input_shape=tuple(X.shape[1:]), kind="image",
         class_counts=_class_counts(y, class_names), stratified=stratified, image_style=image_style,
+        X_test=X[parts["test"]] if "test" in parts else None,
+        y_test=y[parts["test"]] if "test" in parts else None, split_indices=parts,
     )
-    if warning:
-        data.warnings.append(warning)
+    data.warnings.extend(split_warnings)
     return data
 
 
