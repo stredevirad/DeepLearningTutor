@@ -229,6 +229,20 @@ def test_fact_check_gemini_falls_back_to_selected_model(monkeypatch):
     assert calls == [C.llm_api.FAST_MODEL_ID, None]
 
 
+def test_fact_check_does_not_start_a_second_round_when_no_key_is_usable(monkeypatch):
+    """ "All keys are rate-limited" (or no key at all) is not a problem with the fast model:
+    asking again with the selected model would only repeat the same retries and waits."""
+    calls = []
+
+    def fake_generate_text(prompt, model_id=None, json_mode=False, cache=False, **kw):
+        calls.append(model_id)
+        raise C.llm_api.LLMUnavailableError("All Gemini API keys have hit their rate limit.")
+    monkeypatch.setattr(C.llm_api, "generate_text", fake_generate_text)
+    with pytest.raises(C.llm_api.LLMUnavailableError):
+        C.fact_check("ans", ["src"])
+    assert calls == [C.llm_api.FAST_MODEL_ID]
+
+
 def test_fact_check_ollama_path_and_malformed_reply():
     good = SimpleNamespace(chat=lambda **kw: {"message": {"content": '{"grounding_score": 40, "verdict": "low"}'}})
     assert C.fact_check("a", ["s"], using_ollama=True, ollama_client=good, ollama_model_name="m")["score"] == 40

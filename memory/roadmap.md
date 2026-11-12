@@ -89,7 +89,20 @@ depending on the number of keys. No request has a timeout yet (item 3.2).
 
 ## F. Bug list
 
-Empty until item 4.1.
+Hypotheses from reading backend/llm_api.py, backend/agent.py, agent_tools.py, core/rag.py,
+components/chat_helpers.py and the ZIP loader in core/data.py (item 4.1). "Reproduced" means a
+test or a probe script showed the behaviour; only three are fixed, as the item allows.
+
+| # | Severity | Hypothesis | Result |
+|---|----------|------------|--------|
+| 1 | P2 | chat_helpers.fact_check asks the selected model again after ANY LLMError, also after "all keys rate-limited" / "no key", which repeats a full round of retries and waits | Reproduced by a failing test. FIXED in 4.1a |
+| 2 | P2 | app.py answer(): when the reply fails, the question stays in the chat history with no answer; after the next rerun the error is gone, and the unanswered question is sent to the model as history | To be tested in 4.1b |
+| 3 | P2 | core/data.py ZIP loader: a password-protected ZIP passes the summary and then fails at Train with a raw RuntimeError instead of a friendly DataError | Reproduced by a probe. To be fixed in 4.1c |
+| 4 | P3 | ZIP loader: a ZIP with the same member name stored several times loads that image several times (15 images from 12 files in the probe), so copies can land in both training and test | Reproduced by a probe. NOT FIXED (fix budget used) |
+| 5 | P3 | llm_api.embed_texts checks only the number of vectors: an embedding whose values are None raises a raw TypeError instead of an LLMError. The order of the vectors is trusted | Reproduced with a fake (TypeError). Not seen from the real API. NOT FIXED |
+| 6 | P3 | llm_api.classify_error falls back to words in the message: a non-API error that merely contains "500" (e.g. "1500 tokens") is classed transient and retried | Reproduced by a probe. NOT FIXED |
+| 7 | P3 | rag.build_chunks: a document cut off by the capacity limit is remembered as known, so learning it again says "already in the knowledge base"; the message also always says "2000 chunks" whatever the remaining capacity was | Reproduced by a probe. NOT FIXED |
+| 8 | P3 | rag.fingerprint looks at the first and last chunk id only | Two different knowledge bases with equal fingerprints need the same document hashes, count and tag counts; the app cannot produce that (documents are only added whole or all cleared). UNCONFIRMED, not a defect in practice |
 
 ## G. Items
 
@@ -99,9 +112,9 @@ Empty until item 4.1.
 | 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | CI VERIFIED | f4f2c03 | green |
 | 2.1 | MUST | M | Exported script uses the app's three-way split | CI VERIFIED | 3fecf64 | green |
 | 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | CI VERIFIED | d866512 | green |
-| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | DONE | e6f67b0 | running when checked |
-| 3.2 | MUST | S | Request timeout on the Gemini client | DONE | see git log | pending |
-| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | NOT STARTED | | |
+| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | CI VERIFIED | e6f67b0 | green |
+| 3.2 | MUST | S | Request timeout on the Gemini client | DONE | d2bc89e | running when checked |
+| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | IN PROGRESS | 4.1a: see git log | pending |
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | NOT STARTED | | |
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | NOT STARTED | | |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | NOT STARTED | | |
@@ -209,6 +222,10 @@ Item details (short form of the brief; the acceptance rules are binding):
   (HttpRetryOptions(attempts=1)) so it cannot multiply with call_with_retry. Not measured
   against a real hung connection: verified with fakes that raise httpx.ReadTimeout. Files:
   backend/llm_api.py, tests/test_llm_api.py. Tests: 458 -> 462.
+- 4.1a (fact-check fallback). Before: with every key rate-limited the fact-checker made two
+  generate_text calls (fast model, then selected model), each with its own retries and waits.
+  After: one. Shown by tests/test_chat_helpers.py with a fake; no real call. Files:
+  components/chat_helpers.py, tests/test_chat_helpers.py. Tests: 462 -> 463.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -278,7 +295,6 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 4.1: write the 3.2 commit hash and its CI result into table G. Read
-backend/llm_api.py, backend/agent.py, agent_tools.py, core/rag.py, components/chat_helpers.py
-and the ZIP loader in core/data.py; list at most eight hypotheses in section F; failing test
-first; at most three fixes, one commit each (4.1a, 4.1b, 4.1c).
+Continue item 4.1 with 4.1b: write the 4.1a commit hash into table G. Write a failing app test
+for hypothesis 2 (a failed tutor reply leaves an unanswered question in the history), fix it in
+app.py with the smallest change, commit. Then 4.1c: hypothesis 3 (password-protected ZIP).

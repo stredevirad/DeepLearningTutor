@@ -283,6 +283,8 @@ def fact_check(ai_answer_text, source_texts, using_ollama=False, ollama_client=N
     else:
         try:
             raw = llm_api.generate_text(prompt, model_id=llm_api.FAST_MODEL_ID, json_mode=True, cache=True)
+        except llm_api.LLMUnavailableError:
+            raise       # no usable key right now: the selected model would only repeat the same retries and waits
         except llm_api.LLMError:
             # The fast model may be unavailable for this key - retry once with the selected model.
             raw = llm_api.generate_text(prompt, json_mode=True, cache=True)
