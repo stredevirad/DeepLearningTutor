@@ -96,8 +96,8 @@ Empty until item 4.1.
 | Item | Priority | Size | What | Status | Commit | CI |
 |------|----------|------|------|--------|--------|----|
 | 0.1 | MUST | S | Set up CLAUDE.md and this roadmap | CI VERIFIED | 8025149 | green |
-| 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | DONE | see git log | pending |
-| 2.1 | MUST | M | Exported script uses the app's three-way split | NOT STARTED | | |
+| 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | CI VERIFIED | f4f2c03 | green |
+| 2.1 | MUST | M | Exported script uses the app's three-way split | DONE | see git log | pending |
 | 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | NOT STARTED | | |
 | 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | NOT STARTED | | |
 | 3.2 | MUST | S | Request timeout on the Gemini client | NOT STARTED | | |
@@ -177,7 +177,13 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## H. Measurements before and after
 
-None yet. One row per item that changes a measured number.
+- 2.1 (exported script): not a speed item. Before: the script made an 80/20 split and printed a
+  validation accuracy on rows the app never used that way. After: tests execute the generated
+  script and check that its train / validation / test row numbers and arrays equal the app's for
+  the same seed (Iris, Wine, Breast Cancer, Digits, MNIST and Fashion-MNIST with a fake loader,
+  a custom CSV, a custom ZIP, and a tiny CSV that falls back to 80/20 in both). Files:
+  core/codegen.py, app.py (meta gains "has_test"), config/translations.py (caption, both
+  languages), README.md, tests/test_codegen.py. Tests: 450 -> 451.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -209,6 +215,12 @@ None yet. One row per item that changes a measured number.
 - 1.1: the benchmark was run once (it repeats each timing itself); it took about 5 minutes.
   The agent "typically 2-3" call count is a reading of the loop, not a measurement; item 3.1's
   usage meter will give real numbers.
+- 2.1: when a custom dataset is too small for a test set the script follows the app's 80/20
+  fallback and prints validation accuracy only (the app passes "has_test" in the export meta).
+- 2.1: the generated script keeps plain model.evaluate; it reproduces the app's rows and split
+  sizes, not bit-identical weights (the app trains through its own tf.data pipeline).
+- From 2.1 on the user asked for all items to be done in one sitting instead of one per
+  session; the one item = one commit = one push rule is unchanged.
 
 ## K. Real Gemini calls used
 
@@ -216,14 +228,13 @@ None yet. One row per item that changes a measured number.
 
 ## L. Known issues
 
-- Exported script still uses the old 80/20 split (item 2.1).
 - Review prompt, tutor context, agent tools and MCP speak only of validation accuracy (item 2.2).
 - CNN training about twice as slow as the September figure, unexplained (item 5.1).
 - The local-Ollama tutor path is not verified on the development laptop; do not claim it works.
 
 ## M. Exact next action
 
-Start item 2.1: write the 1.1 commit hash and its CI result into table G. Then read
-core/codegen.py and tests/test_codegen.py, find how the app makes its three-way split (search
-core/data.py for the split function), and make the exported script use the same split and print
-validation and test accuracy. Remove the "older two-way split" captions and README lines.
+Start item 2.2: write the 2.1 commit hash and its CI result into table G. Then add test accuracy
+to the AI review prompt (tts_engine.py), the tutor's project status (app.py project_status), the
+agent tools (agent_tools.py; keep ranking by validation), mcp_server.py and mcp_client.py, with
+tests, and remove the matching README limitations.

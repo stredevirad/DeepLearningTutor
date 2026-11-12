@@ -154,8 +154,9 @@ answer in English only, and agent mode needs Gemini.
 - **Predictions.** Upload an image or try the bundled samples; for tables, fill in feature
   values or pick a random test example and compare with its true class.
 - **Downloads.** The trained model as `.keras`, and a standalone Python script with the same
-  preprocessing, architecture, hyperparameters and seed (see Limitations for what the script
-  does not reproduce yet).
+  preprocessing, architecture, hyperparameters and seed. It makes the same train /
+  validation / test split as the app (the same rows for the same seed) and prints validation
+  and test accuracy.
 
 ### Remote training (optional)
 `mcp_server.py` trains the built-in datasets on another machine as background jobs; the app
@@ -264,9 +265,6 @@ python benchmarks/run_benchmarks.py --out results.json   # start-up, rerun and c
 
 - **The test set is not carried through every part yet.** The main screen uses it. These
   parts still work with validation numbers, and are labelled as such:
-  - the exported Python script makes the older two-way split (80 / 20; for MNIST the
-    official test images serve as validation) and prints a validation accuracy, so it does
-    not reproduce the app's exact rows or its test accuracy;
   - the AI Professor's review and the tutor's context describe the validation accuracy;
   - the agent's tools rank experiments by validation accuracy (which is correct) but do not
     quote the test accuracy in their comparison, and the remote-training log prints only

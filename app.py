@@ -575,14 +575,14 @@ def prepare_training_data(cfg):
             numeric = [c for c in data.feature_columns if c not in data.categorical_levels]
             meta = {"target_column": target_column, "numeric_columns": numeric,
                     "categorical_columns": list(data.categorical_levels), "stratified": data.stratified,
-                    "file_name": custom_csv.name}
+                    "has_test": data.has_test, "file_name": custom_csv.name}
             return data, meta
         return prepare_builtin_tabular(cfg["dataset"], seed=cfg["seed"]), {}
     if custom_zip is not None:
         X, y, class_names, report = _decode_zip(file_sha(custom_zip), custom_zip.getvalue())
         data = prepare_image_arrays(X, y, class_names, seed=cfg["seed"], image_style="object")
         data.warnings = report["warnings"] + data.warnings
-        meta = {"class_names": class_names, "stratified": data.stratified,
+        meta = {"class_names": class_names, "stratified": data.stratified, "has_test": data.has_test,
                 "folder": os.path.splitext(custom_zip.name)[0]}
         return data, meta
     return prepare_builtin_images(cfg["dataset"], loader=IMAGE_LOADERS[cfg["dataset"]], seed=cfg["seed"]), {}

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from core import data as D
 from core.codegen import generate_training_code
 from core.training import validate_config
 from tests.helpers import fake_image_loader, shape_png
@@ -88,7 +89,11 @@ def test_code_is_valid_faithful_and_leak_free(raw):
     kw = {k.arg: k.value for k in fit.keywords}
     assert _const(kw["epochs"]) == cfg["epochs"] and _const(kw["batch_size"]) == cfg["batch_size"]
     assert bool(_calls(tree, "EarlyStopping")) == cfg["early_stopping"]
-    assert f"SEED = {cfg['seed']}" in code and "stratify=y" in code or cfg["network_type"] == "CNN"
+    assert f"SEED = {cfg['seed']}" in code and "stratify=y" in code
+
+    # --- three parts, and both numbers are printed ---
+    assert "X_test" in code and "Validation accuracy" in code and "Test accuracy" in code
+    assert "validation only" not in code
 
 
 def test_right_dataset_loader_is_used():
@@ -111,24 +116,49 @@ def test_custom_csv_code_mentions_target_and_columns():
 
 def _run(code, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    exec(compile(code, "generated.py", "exec"), {"__name__": "__generated__"})
+    ns = {"__name__": "__generated__"}
+    exec(compile(code, "generated.py", "exec"), ns)
     assert os.path.exists(tmp_path / "my_model.keras")
+    return ns
+
+
+def _same_rows(ns, data):
+    """The script put exactly the app's rows into each part."""
+    for part in data.split_indices:
+        assert np.array_equal(ns[part], data.split_indices[part]), part
+    assert np.allclose(ns["X_train"], data.X_train, atol=1e-5) and np.array_equal(ns["y_train"], data.y_train)
+    assert np.allclose(ns["X_val"], data.X_val, atol=1e-5) and np.array_equal(ns["y_val"], data.y_val)
+    if data.has_test:
+        assert np.allclose(ns["X_test"], data.X_test, atol=1e-5) and np.array_equal(ns["y_test"], data.y_test)
+        assert 0.0 <= ns["test_acc"] <= 1.0
+    else:
+        assert "X_test" not in ns and "test_acc" not in ns
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("dataset", ["Iris", "Wine", "Breast Cancer", "Digits"])
 def test_simple_nn_scripts_run(dataset, tmp_path, monkeypatch):
-    code = generate_training_code(_cfg(dataset=dataset, epochs=1, early_stopping=True, dropout_rate=0.1))
-    _run(code, tmp_path, monkeypatch)
+    code = generate_training_code(_cfg(dataset=dataset, epochs=1, early_stopping=True, dropout_rate=0.1, seed=7))
+    ns = _run(code, tmp_path, monkeypatch)
+    data = D.prepare_builtin_tabular(dataset, seed=7)
+    assert data.has_test
+    _same_rows(ns, data)
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("dataset,module", [("MNIST", "mnist"), ("Fashion-MNIST", "fashion_mnist")])
 def test_cnn_scripts_run(dataset, module, tmp_path, monkeypatch):
     import tensorflow as tf
-    monkeypatch.setattr(getattr(tf.keras.datasets, module), "load_data", fake_image_loader(64, 16))
+    images = fake_image_loader(200, 16)()        # loaded once, so the script and the app see the same images
+
+    def loader():
+        return images
+    monkeypatch.setattr(getattr(tf.keras.datasets, module), "load_data", loader)
     code = generate_training_code(_cfg(network_type="CNN", dataset=dataset, epochs=1, conv_layers=2, base_filters=4))
-    _run(code, tmp_path, monkeypatch)
+    ns = _run(code, tmp_path, monkeypatch)
+    data = D.prepare_builtin_images(dataset, loader=loader, seed=42)
+    assert len(data.y_val) == 20 and len(data.y_test) == 16      # a tenth of the training set; the official test set
+    _same_rows(ns, data)
 
 
 @pytest.mark.slow
@@ -138,8 +168,25 @@ def test_custom_csv_script_runs(tmp_path, monkeypatch):
                        "colour": ["red", "blue"] * 20, "species": ["a", "b", "c", "d"] * 10})
     df.loc[3, "w"] = None
     df.to_csv(tmp_path / "your_dataset.csv", index=False)
+    data = D.prepare_custom_csv(df, "species", seed=42)
+    assert data.has_test
     code = generate_training_code(_cfg(network_type="Simple NN", dataset="x.csv", using_custom=True, epochs=1), CSV_META)
-    _run(code, tmp_path, monkeypatch)
+    _same_rows(_run(code, tmp_path, monkeypatch), data)
+
+
+@pytest.mark.slow
+def test_tiny_csv_script_makes_the_fallback_split(tmp_path, monkeypatch):
+    """Too few rows for three parts: app and script both fall back to 80 / 20 and report validation only."""
+    rng = np.random.default_rng(1)
+    df = pd.DataFrame({"w": rng.normal(size=8), "h": rng.normal(size=8),
+                       "colour": ["red", "blue"] * 4, "species": ["a", "b"] * 4})
+    df.to_csv(tmp_path / "your_dataset.csv", index=False)
+    data = D.prepare_custom_csv(df, "species", seed=42)
+    assert not data.has_test
+    meta = dict(CSV_META, stratified=data.stratified, has_test=False)
+    code = generate_training_code(_cfg(network_type="Simple NN", dataset="x.csv", using_custom=True, epochs=1), meta)
+    assert "Test accuracy" not in code and "X_test" not in code
+    _same_rows(_run(code, tmp_path, monkeypatch), data)
 
 
 @pytest.mark.slow
@@ -147,8 +194,11 @@ def test_custom_zip_script_runs(tmp_path, monkeypatch):
     for cls in ("circle", "square"):
         folder = tmp_path / "your_dataset" / cls
         folder.mkdir(parents=True)
-        for i in range(6):
+        for i in range(10):
             (folder / f"{i}.png").write_bytes(shape_png(cls))
     code = generate_training_code(_cfg(network_type="CNN", dataset="s.zip", using_custom=True, epochs=1,
                                        conv_layers=1, base_filters=4), ZIP_META)
-    _run(code, tmp_path, monkeypatch)
+    ns = _run(code, tmp_path, monkeypatch)
+    data = D.prepare_image_arrays(ns["X"], ns["y"], ["circle", "square"], seed=42)
+    assert data.has_test
+    _same_rows(ns, data)
