@@ -4,8 +4,8 @@ Knowledge Base (RAG) utilities
 Text extraction (PDF/TXT), chunking, and retrieval for the AI tutor.
 
 Every chunk remembers which embedding backend produced its vector
-(`chunk["embeddings"] = {"gemini:gemini-embedding-001": [...], "ollama:nomic-embed-text": [...]}`),
-and a similarity search only ever compares vectors from the SAME backend.
+(`chunk["embeddings"] = {"gemini:gemini-embedding-001": array, "ollama:nomic-embed-text": array}`,
+each a float32 NumPy array), and a similarity search only ever compares vectors from the SAME backend.
 When no matching embeddings exist (e.g. the Ollama embedding model is not
 pulled, or Gemini has no key) retrieval falls back to BM25 keyword ranking,
 so retrieval is always real - never "the first N chunks".
@@ -150,8 +150,9 @@ def add_embeddings(chunks, backend_tag, embed_fn):
         return 0
     vectors = embed_fn([c["text"] for c in todo])
     for chunk, vec in zip(todo, vectors):
-        if vec:
-            chunk["embeddings"][backend_tag] = [float(x) for x in vec]
+        if vec is not None and len(vec):
+            # float32: 4 bytes per number. No copy when the backend already returned a float32 array.
+            chunk["embeddings"][backend_tag] = np.asarray(vec, dtype=np.float32)
     return sum(1 for c in todo if backend_tag in c["embeddings"])
 
 
@@ -273,7 +274,7 @@ def retrieve(query, chunks, backend_tag=None, query_embed_fn=None, k=3, index=No
             q_vec = query_embed_fn(query)
         except Exception:  # fall back to keywords rather than failing the chat
             q_vec = None
-        matrix = index.matrix(chunks, backend_tag) if q_vec else None
+        matrix = index.matrix(chunks, backend_tag) if q_vec is not None and len(q_vec) else None
         if matrix is not None and len(q_vec) == matrix.shape[1]:
             q = np.asarray(q_vec, dtype=np.float32)
             scores = (matrix @ (q / (np.linalg.norm(q) + 1e-12))).astype(np.float64)

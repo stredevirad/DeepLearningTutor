@@ -236,3 +236,32 @@ def test_duplicate_passages_are_returned_once():
                                           ("dropout rate of 0.2 is common", "c.txt")])]
     results, _ = R.retrieve("dropout", chunks, k=3)
     assert len(results) == 2
+
+
+def test_vectors_are_stored_as_float32_and_ranking_is_unchanged():
+    """Storing float32 arrays instead of Python float lists must not change what is retrieved:
+    the search matrix was float32 before, too."""
+    import numpy as np
+    rng = np.random.default_rng(0)
+    vectors = rng.normal(size=(60, 48))                       # float64, as the API's JSON numbers arrive
+    tag = R.GEMINI_EMBED_TAG
+    kb = [{"id": i, "text": f"passage {i}", "source": "d", "doc_sha": "x", "embeddings": {}} for i in range(60)]
+    assert R.add_embeddings(kb, tag, lambda texts: [v.tolist() for v in vectors]) == 60
+    stored = kb[0]["embeddings"][tag]
+    assert isinstance(stored, np.ndarray) and stored.dtype == np.float32
+
+    shared = np.asarray(vectors[1], dtype=np.float32)          # a float32 array from the backend is kept as it is
+    one = [{"id": 0, "text": "p", "embeddings": {}}]
+    R.add_embeddings(one, tag, lambda texts: [shared])
+    assert one[0]["embeddings"][tag] is shared
+
+    for q in rng.normal(size=(20, 48)):
+        got, method = R.retrieve("anything", kb, tag, lambda _q, q=q: q.tolist(), k=3)
+        # reference: the ranking the old storage (lists of Python floats) produced
+        m = np.asarray(vectors.tolist(), dtype=np.float32)
+        m = m / (np.linalg.norm(m, axis=1, keepdims=True) + 1e-12)
+        q32 = np.asarray(q.tolist(), dtype=np.float32)
+        expected = np.argsort(-(m @ (q32 / (np.linalg.norm(q32) + 1e-12))).astype(np.float64), kind="stable")[:3]
+        assert method == "cosine" and [c["id"] for _, c in got] == list(expected)
+        got_array, _ = R.retrieve("anything", kb, tag, lambda _q, q=q: np.asarray(q, dtype=np.float32), k=3)
+        assert [c["id"] for _, c in got_array] == list(expected)   # the question may arrive as an array as well

@@ -26,6 +26,7 @@ import threading
 import time
 from collections import OrderedDict
 
+import numpy as np
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
@@ -53,6 +54,10 @@ GEMINI_MODELS = {
 DEFAULT_MODEL_LABEL = list(GEMINI_MODELS.keys())[1]
 FAST_MODEL_ID = "gemini-2.5-flash-lite"      # cheap model for fact-checking
 EMBEDDING_MODEL = "gemini-embedding-001"
+# The model's full vector has 3,072 numbers. Asking for 768 (output_dimensionality) gives the first
+# 768 of them, a quarter of the memory. Measured on 20 questions over the bundled study guide:
+# the best passage was the same for all 20 (see memory/roadmap.md, item 3.3).
+EMBEDDING_DIMENSIONS = 768
 
 # Thinking budget (tokens the model may spend reasoning before answering).
 # None = the model's default behaviour.
@@ -425,12 +430,16 @@ def generate_text(prompt, model_id=None, json_mode=False, thinking_budget=None, 
 
 def embed_texts(texts, task_type="RETRIEVAL_DOCUMENT", **retry_kwargs):
     """Embed a list of texts with gemini-embedding-001 (batched, cached).
-    Use task_type RETRIEVAL_DOCUMENT for knowledge-base chunks and RETRIEVAL_QUERY for questions."""
+    Use task_type RETRIEVAL_DOCUMENT for knowledge-base chunks and RETRIEVAL_QUERY for questions.
+
+    Each vector is a read-only float32 NumPy array: 4 bytes per number instead of a Python
+    list of float objects (about 40 bytes per number). The cache and the caller share the
+    same array, so a vector is held in memory once."""
     texts = list(texts)
     out = [None] * len(texts)
     missing = []
     for i, t in enumerate(texts):
-        hit = _cache_get(_embedding_cache, _cache_key("emb", EMBEDDING_MODEL, task_type, t))
+        hit = _cache_get(_embedding_cache, _cache_key("emb", EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, task_type, t))
         if hit is not None:
             out[i] = hit
         else:
@@ -446,14 +455,15 @@ def embed_texts(texts, task_type="RETRIEVAL_DOCUMENT", **retry_kwargs):
         def _call():
             return get_client().models.embed_content(
                 model=EMBEDDING_MODEL, contents=batch,
-                config=types.EmbedContentConfig(task_type=task_type,
+                config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=EMBEDDING_DIMENSIONS,
                                                 http_options=http_options(EMBED_TIMEOUT_SECONDS)))
         result = call_with_retry(_call, usage_kind="embed", **retry_kwargs)
-        vectors = [list(e.values) for e in (result.embeddings or [])]
+        vectors = [np.asarray(e.values, dtype=np.float32) for e in (result.embeddings or [])]
         if len(vectors) != len(batch):
             raise LLMError("The embedding service returned an unexpected number of vectors.")
         for i, vec in zip(batch_idx, vectors):
+            vec.setflags(write=False)           # shared by the cache and the knowledge base
             out[i] = vec
-            _cache_put(_embedding_cache, _cache_key("emb", EMBEDDING_MODEL, task_type, texts[i]), vec,
-                       EMBEDDING_CACHE_SIZE)
+            _cache_put(_embedding_cache, _cache_key("emb", EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, task_type, texts[i]),
+                       vec, EMBEDDING_CACHE_SIZE)
     return out

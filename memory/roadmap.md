@@ -114,8 +114,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | CI VERIFIED | d866512 | green |
 | 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | CI VERIFIED | e6f67b0 | green |
 | 3.2 | MUST | S | Request timeout on the Gemini client | CI VERIFIED | d2bc89e | green |
-| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | DONE | 4.1a 0caebba; 4.1b d77ecda; 4.1c: see git log | 4.1a green; 4.1b, 4.1c pending |
-| 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | NOT STARTED | | |
+| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | CI VERIFIED | 4.1a 0caebba; 4.1b d77ecda; 4.1c 5cd2d77 | green (all three) |
+| 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | DONE | see git log | pending |
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | NOT STARTED | | |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | NOT STARTED | | |
 | 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | NOT STARTED | | |
@@ -239,6 +239,25 @@ Item details (short form of the brief; the acceptance rules are binding):
   Tests: 464 -> 465.
 - 4.1 total: 8 hypotheses, 7 reproduced, 3 fixed (one commit each), 4 reproduced and left
   open as P3 (section F, numbers 4-7), 1 unconfirmed.
+- 3.3 (embedding memory), measured with tracemalloc and a fake client that returns Python
+  lists as the SDK does, 500 chunks:
+
+  | Storage | Vectors held by chunks + cache | Per chunk | Search matrix | Total |
+  |---------|-------------------------------|-----------|---------------|-------|
+  | before: Python float lists, 3,072 numbers | 62.4 MB | 124.8 KB | 6.2 MB | 68.6 MB |
+  | float32 arrays shared by cache and chunk, 3,072 | 6.4 MB | 12.8 KB | 6.2 MB | 12.6 MB |
+  | float32 arrays, 768 numbers (kept) | 1.8 MB | 3.6 KB | 1.5 MB | 3.3 MB |
+
+  float32 step: 9.8x less (rule: at least 4x) and the top-3 passages are identical (a test
+  compares 20 random questions against the old list storage; the search matrix was float32
+  before as well). KEPT. With 2,000 chunks the vectors now take 25.4 MB at 3,072 numbers
+  (measured); the old 200 MB figure for 2,000 chunks was an estimate and was not re-measured.
+  768 step, 3 real embedding calls: 15 passages of the bundled study guide (chunk size 200 for
+  this test, to get more than 3 passages) and 20 fixed questions. The API's 768-number vector
+  equals the first 768 numbers of the 3,072 one (cosine 0.9999998 at worst). Same first result
+  for 20 of 20 questions (rule: at least 18); same top-3 in the same order for 16 of 20, same
+  top-3 as a set for 17 of 20. KEPT. Caveat: one short document, 15 passages.
+  Files: backend/llm_api.py, core/rag.py, tests (llm_api, rag). Tests: 465 -> 467.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -298,18 +317,23 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## K. Real Gemini calls used
 
-0 of 12.
+3 of 12.
+
+- 3.3: 3 embedding calls (study-guide passages at 3,072; 20 questions at 3,072; 20 questions at
+  768). All succeeded at the first attempt.
 
 ## L. Known issues
 
 - The typical-range verdict compares validation accuracy, not test accuracy (by design, see J).
+- Embeddings are 768 numbers instead of 3,072: checked on one short document only (item 3.3).
 - CNN training about twice as slow as the September figure, unexplained (item 5.1).
 - Four small defects found in the bug hunt are reproduced but not fixed (section F, 4-7).
 - The local-Ollama tutor path is not verified on the development laptop; do not claim it works.
 
 ## M. Exact next action
 
-Start item 3.3: write the 4.1c commit hash and the CI results of 4.1b / 4.1c into table G.
-Measure with tracemalloc the bytes held by a 500-chunk knowledge base and by the embedding
-cache, then try float32 NumPy vectors shared by cache and chunks, and (if the docs confirm
-output_dimensionality) 768 dimensions on 20 fixed questions with at most 3 real embedding calls.
+Start item 5.1: write the 3.3 commit hash and its CI result into table G. On mains power,
+time 3 MNIST epochs three times with the old split sizes (60,000 train / 10,000 validation)
+and the new ones (54,000 / 6,000 / 10,000 test), training and evaluation timed separately.
+Then try steps_per_execution, a larger evaluation batch and dataset cache/prefetch one at a
+time; keep a change only if it is at least 15% faster with test accuracy within 0.3 points.

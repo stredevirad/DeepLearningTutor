@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from google.genai import errors as genai_errors
 
@@ -149,6 +150,14 @@ def test_embedding_requests_carry_the_shorter_time_limit(keys, monkeypatch):
     L.embed_texts(["a"])
     assert seen[0].http_options.timeout == L.EMBED_TIMEOUT_SECONDS * 1000
     assert seen[0].http_options.retry_options.attempts == 1 and seen[0].task_type == "RETRIEVAL_DOCUMENT"
+    assert seen[0].output_dimensionality == L.EMBEDDING_DIMENSIONS == 768      # a quarter of the full 3,072
+
+
+def test_embedding_cache_is_separate_per_dimension(fake_client, monkeypatch):
+    L.embed_texts(["a"])
+    monkeypatch.setattr(L, "EMBEDDING_DIMENSIONS", 3072)
+    L.embed_texts(["a"])
+    assert len(fake_client.embed_calls) == 2        # a vector of another size is never served from the cache
 
 
 def test_a_timeout_is_transient_and_retried_once_only(keys):
@@ -234,11 +243,13 @@ def test_empty_reply_is_an_error(keys, monkeypatch):
 def test_embed_texts_batches_and_caches(fake_client, monkeypatch):
     monkeypatch.setattr(L, "EMBED_BATCH_SIZE", 2)
     vecs = L.embed_texts(["a", "bb", "ccc"], task_type="RETRIEVAL_DOCUMENT")
-    assert vecs == [[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]]
+    assert [v.tolist() for v in vecs] == [[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]]
+    assert all(v.dtype == np.float32 and not v.flags.writeable for v in vecs)      # compact, shared, read-only
     assert [len(c[1]) for c in fake_client.embed_calls] == [2, 1]
     assert {c[2] for c in fake_client.embed_calls} == {"RETRIEVAL_DOCUMENT"}
-    L.embed_texts(["a", "bb"], task_type="RETRIEVAL_DOCUMENT")
+    again = L.embed_texts(["a", "bb"], task_type="RETRIEVAL_DOCUMENT")
     assert len(fake_client.embed_calls) == 2                        # cached, no new call
+    assert again[0] is vecs[0] and again[1] is vecs[1]              # the cache hands out the same array
     L.embed_texts(["a"], task_type="RETRIEVAL_QUERY")
     assert fake_client.embed_calls[-1][2] == "RETRIEVAL_QUERY"      # different task type -> new call
 
