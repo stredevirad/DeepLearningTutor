@@ -1,0 +1,34 @@
+# --- Secrets (never commit API keys) ---
+.env
+.env.*
+!.env.example
+
+# --- Python / virtual environments ---
+__pycache__/
+*.py[cod]
+venv/
+venv_*/
+.venv/
+env/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Model artefacts & temp files ---
+*.keras
+*.h5
+*.tmp
+*.temp
+tmp/
+temp/
+.streamlit/secrets.toml
+
+# --- Report material (contains personal details of students / staff; keep out of git) ---
+*.pdf
+*.pdf.txt
+extracted_pdf.txt
+
+# --- OS / editor noise ---
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

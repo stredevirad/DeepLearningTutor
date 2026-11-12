@@ -1,0 +1,28 @@
+# Streamlit settings for the Deep Learning Tutor.
+# The performance options below are explained in docs/PERFORMANCE.md.
+
+[server]
+# Hard ceiling for any single upload (MB). Per-type limits (CSV, ZIP, PDF,
+# images) are enforced more strictly in the app code.
+maxUploadSize = 100
+# Streamlit's file watcher re-scans every imported module after EVERY script
+# run. With TensorFlow loaded that is ~5,000 modules and 1-2 s per click.
+# While editing the code, run:  streamlit run app.py --server.fileWatcherType auto
+fileWatcherType = "none"
+
+[runner]
+# A full gc.collect() after every run costs ~0.3 s with TensorFlow loaded;
+# Python's normal garbage collection still runs.
+postScriptGC = false
+# The app never relies on "magic" (bare expressions written to the page).
+magicEnabled = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Hide developer-only toolbar items (e.g. "Deploy"); the app menu stays.
+toolbarMode = "minimal"
+
+[theme]
+primaryColor = "#4F46E5"

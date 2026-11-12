@@ -1,0 +1,22 @@
+# DEEP LEARNING STUDY GUIDE (Expert Edition)
+
+## 1. NEURAL NETWORK FOUNDATIONS
+- **The Artificial Neuron**: The fundamental unit of deep learning, taking multiple inputs and producing one output.
+- **Weights and Biases**: The "knobs" that the model turns to learn. Weights determine the importance of input, and biases shift the activation function.
+- **Activation Functions**:
+    - **ReLU (Rectified Linear Unit)**: The most common choice. It outputs the input if it's positive, otherwise zero. Helps avoid the "vanishing gradient" problem.
+    - **Sigmoid**: Converts inputs into a range between 0 and 1. Perfect for the final layer of binary classifiers.
+
+## 2. ADVANCED ARCHITECTURES
+- **CNN (Convolutional Neural Networks)**: Specifically designed for grid-like data (images).
+    - **Convolutional Layer**: Uses "filters" to scan images for edges, textures, and eventually complex objects.
+    - **MaxPooling**: A technique to shrink the size of the data while keeping the most important features.
+- **RNN (Recurrent Neural Networks)**: Designed for sequences like text or time-series data, using "memory" of previous inputs.
+
+## 3. TRAINING & OPTIMIZATION
+- **Binary Cross-Entropy**: The loss function used when the model has to choose between two classes (0 or 1).
+- **Adam Optimizer**: A smart algorithm that adjusts the learning rate automatically for each parameter, making training faster and more stable.
+- **Overfitting**: When a model learns the training data too well (including noise) and fails on new data.
+
+## 4. WHAT IS RAG? (Retrieval-Augmented Generation)
+RAG is the technology you are using right now! It allows an AI (like Gemini) to look up information in a specific "Knowledge Base" (like this text file) before generating an answer. This ensures the AI stays factual and grounded in your specific documents.
