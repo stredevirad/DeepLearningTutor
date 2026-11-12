@@ -43,7 +43,41 @@ this pass. Development machine: a CPU-only laptop (Intel Core Ultra 5 125H, 15.6
 
 ## D. Baseline measurements
 
-Empty until item 1.1.
+Measured 2026-11-12 at commit 8025149 with `benchmarks/run_benchmarks.py` (hermetic, fake LLM),
+on mains power, CPU only. Full results are kept as baseline.json in the run folder. One run;
+medians are over the repeats the script makes (3 to 20, as noted).
+
+| What | Baseline |
+|------|----------|
+| Cold first run (fresh process: all app imports + first page) | 5,347 ms (median of 3) |
+| of which `import tensorflow` | 4,361 ms (median of 3) |
+| No-op rerun, nothing trained | 23.8 ms (median of 5) |
+| No-op rerun, Iris model trained | 29.8 ms (median of 5) |
+| Train click on Iris, 50 epochs (whole rerun) | 3,139 ms |
+| Chat message round trip, instant fake LLM (app overhead) | 31.3 ms (median of 3) |
+| RAG keyword search, 500 chunks, index built per query | 22.1 ms (median of 5) |
+| RAG keyword search, 500 chunks, cached index | 0.27 ms (median of 5) |
+| RAG cosine search, 500 x 3,072, built per query | 38.5 ms (median of 5) |
+| RAG cosine search, 500 x 3,072, cached index | 0.46 ms (median of 5) |
+| One MNIST epoch, 6,000 images, Train click in the app | 2,159 ms |
+| One MNIST epoch, 6,000 images, training only (app's tf.data pipeline) | 1,300 ms |
+| Response cache: 1 miss + 51 identical requests | 1 SDK call |
+| MCP: Iris 30 epochs round trip | 6,255 ms |
+
+### API calls per user action (read from the code at 8025149, not measured)
+
+"Attempts" are what `call_with_retry` allows per call: max(3, min(keys + 2, 6)), so 3 to 6
+depending on the number of keys. No request has a timeout yet (item 3.2).
+
+| User action | Gemini calls when all goes well | Worst case | Cached? |
+|-------------|---------------------------------|------------|---------|
+| Tutor question, no knowledge base | 1 generate | 1 call x 3-6 attempts | never |
+| Tutor question, knowledge base with Gemini embeddings | 1 embed (the question) + 1 generate | each x 3-6 attempts | the question's embedding only |
+| Tutor question, knowledge base without embeddings | 1 generate (keyword search is local) | 1 call x 3-6 attempts | never |
+| The above with the fact-checker on | + 1 generate (fast model) | + 2 generates (fast model fails, selected model retried), each x 3-6 attempts | yes, same answer + same sources |
+| Agent question | 1 generate per tool round + the answer; typically 2-3 | 5 tool rounds + 1 forced final answer = 6 generates, each x 3-6 attempts | no (identical tool calls and identical experiments are answered locally) |
+| AI review of a training run | 1 generate | 1 call x 2 attempts | yes, identical prompt = 0 calls |
+| Learning a document of N chunks | ceil(N / 100) embed calls | each x 3-6 attempts | yes, per chunk text; a duplicate document = 0 calls |
 
 ## E. Storage (measured 2026-11-12)
 
@@ -61,8 +95,8 @@ Empty until item 4.1.
 
 | Item | Priority | Size | What | Status | Commit | CI |
 |------|----------|------|------|--------|--------|----|
-| 0.1 | MUST | S | Set up CLAUDE.md and this roadmap | DONE | see git log | pending |
-| 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | NOT STARTED | | |
+| 0.1 | MUST | S | Set up CLAUDE.md and this roadmap | CI VERIFIED | 8025149 | green |
+| 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | DONE | see git log | pending |
 | 2.1 | MUST | M | Exported script uses the app's three-way split | NOT STARTED | | |
 | 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | NOT STARTED | | |
 | 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | NOT STARTED | | |
@@ -167,8 +201,14 @@ None yet. One row per item that changes a measured number.
   pushes still use exactly `git push origin main`).
 - 0.1: the privacy check is run twice before each push, once against the repo's `.env` and once
   against the old private project's `.env`, because both hold keys.
-- 0.1: the full test suite was not run for this item (documentation only, no code touched);
-  the 450-test count is re-verified at the first item that changes code.
+- 0.1: the full test suite was not run for this item (documentation only, no code touched).
+  It was run at item 1.1: 450 passed in 122 s, pyflakes silent.
+
+- 0.1: the 0.1 commit was amended once before it was pushed, to bring CLAUDE.md down to its
+  40-line limit. Nothing published was rewritten.
+- 1.1: the benchmark was run once (it repeats each timing itself); it took about 5 minutes.
+  The agent "typically 2-3" call count is a reading of the loop, not a measurement; item 3.1's
+  usage meter will give real numbers.
 
 ## K. Real Gemini calls used
 
@@ -183,6 +223,7 @@ None yet. One row per item that changes a measured number.
 
 ## M. Exact next action
 
-Start item 1.1: write the 0.1 commit hash and its CI result into table G, then run the baseline
-benchmark on mains power (output to the run folder), fill section D and the "API calls per user
-action" table from the code. No code changes.
+Start item 2.1: write the 1.1 commit hash and its CI result into table G. Then read
+core/codegen.py and tests/test_codegen.py, find how the app makes its three-way split (search
+core/data.py for the split function), and make the exported script use the same split and print
+validation and test accuracy. Remove the "older two-way split" captions and README lines.
