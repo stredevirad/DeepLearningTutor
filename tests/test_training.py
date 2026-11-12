@@ -186,3 +186,38 @@ def test_compact_history():
     c = compact_history(h)
     assert c["sampled_epochs"] == [1, 6, 11, 16, 20] and len(c["loss"]) == 5
     assert compact_history({})["sampled_epochs"] == []
+
+
+# ─────────────────────────── several batches per TensorFlow call ───────────────────────────
+
+def test_steps_per_execution_only_for_long_epochs():
+    assert T.steps_per_execution_for(1) == 1 and T.steps_per_execution_for(40) == 1       # tables: a few steps
+    assert T.steps_per_execution_for(319) == 1 and T.steps_per_execution_for(320) == 32
+    assert T.steps_per_execution_for(1688) == 32                                          # MNIST, batch 32
+
+
+def test_long_epochs_run_every_batch_exactly_once(monkeypatch):
+    """14 steps per epoch in groups of 4 (4 + 4 + 4 + 2): no batch is skipped or run twice."""
+    monkeypatch.setattr(T, "STEPS_PER_EXECUTION", 4)
+    monkeypatch.setattr(T, "MIN_EXECUTIONS_PER_EPOCH", 2)
+    rng = np.random.default_rng(0)
+    y = np.arange(150) % 2
+    X = rng.random((150, 28, 28, 1), dtype=np.float32) * 0.1
+    X[y == 1, :14] += 0.8
+    data = D.prepare_image_arrays(X, y, ["a", "b"])
+    assert len(data.y_train) == 106                             # 14 batches of 8 (the last one has 2 rows)
+    cfg = validate_config({"network_type": "CNN", "dataset": "MNIST", "conv_layers": 1, "base_filters": 4,
+                           "epochs": 2, "batch_size": 8})
+    set_global_seed(0)
+    model = build_model(cfg, data.input_shape, 2)
+    outcome = train_model(model, data, cfg)
+    assert model.steps_per_execution == 4
+    assert outcome["epochs_run"] == 2 and len(outcome["history"]["val_loss"]) == 2
+    assert int(model.optimizer.iterations.numpy()) == 2 * 14    # every batch, once
+    assert outcome["final"]["test_accuracy"] is not None
+
+    set_global_seed(0)
+    small = build_model(cfg, data.input_shape, 2)
+    monkeypatch.setattr(T, "MIN_EXECUTIONS_PER_EPOCH", 10)       # 14 steps is now a short epoch
+    train_model(small, data, cfg)
+    assert small.steps_per_execution == 1

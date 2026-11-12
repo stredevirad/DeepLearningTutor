@@ -150,10 +150,23 @@ tf.get_logger().addFilter(_SkipPerModelTracingNotice())
 
 VAL_BATCH = 512      # validation / evaluation batch size (inference only, so larger is fine)
 EVAL_CHUNK = 1024
+# Long epochs (image models): run this many batches inside one TensorFlow call instead of
+# returning to Python after every batch (measurements: memory/roadmap.md, item 5.1).
+# Short epochs (tables) keep 1, so the live chart still moves after every batch.
+STEPS_PER_EXECUTION = 32
+MIN_EXECUTIONS_PER_EPOCH = 10
 
 
-def batch_pipeline(X, y, batch_size, shuffle):
-    """Endless tf.data stream of (X[idx], y[idx]) batches, one pass per epoch.
+def steps_per_execution_for(steps_per_epoch):
+    """How many batches to run per TensorFlow call for an epoch of this length."""
+    if steps_per_epoch >= STEPS_PER_EXECUTION * MIN_EXECUTIONS_PER_EPOCH:
+        return STEPS_PER_EXECUTION
+    return 1
+
+
+def batch_pipeline(X, y, batch_size, shuffle, repeat=True):
+    """Endless tf.data stream of (X[idx], y[idx]) batches, one pass per epoch
+    (with repeat=False: a single pass that ends, reshuffled each time it is iterated).
 
     Batching happens before `repeat`, so every epoch sees each sample exactly once
     (same as fit(..., batch_size=...)) and is reshuffled each epoch. The random
@@ -168,7 +181,9 @@ def batch_pipeline(X, y, batch_size, shuffle):
         ds = ds.shuffle(n, reshuffle_each_iteration=True)
     gather = tf.autograph.experimental.do_not_convert(lambda idx: (tf.gather(X, idx), tf.gather(y, idx)))
     ds = ds.batch(int(batch_size)).map(gather)
-    return ds.repeat().prefetch(tf.data.AUTOTUNE), math.ceil(n / int(batch_size))
+    if repeat:
+        ds = ds.repeat()
+    return ds.prefetch(tf.data.AUTOTUNE), math.ceil(n / int(batch_size))
 
 
 def _logits_function(model):
@@ -268,9 +283,19 @@ def train_model(model, data, cfg, callbacks=None):
 
     train_ds, steps = batch_pipeline(data.X_train, data.y_train, cfg["batch_size"], shuffle=True)
     val_ds, val_steps = batch_pipeline(data.X_val, data.y_val, VAL_BATCH, shuffle=False)
-    history = model.fit(train_ds, steps_per_epoch=steps, epochs=int(cfg["epochs"]),
-                        validation_data=val_ds, validation_steps=val_steps, shuffle=False,  # pipeline shuffles
-                        verbose=0, callbacks=cbs)
+    fit_steps = {"steps_per_epoch": steps, "validation_steps": val_steps}
+    per_call = steps_per_execution_for(steps)
+    if per_call > 1:
+        # Same optimizer, loss and metric; only the batching of the loop changes. The data must END
+        # after one pass here: with an endless stream Keras rounds an epoch UP to a multiple of
+        # `per_call` batches and would train on a few batches twice.
+        model.compile(optimizer=model.optimizer, loss="sparse_categorical_crossentropy", metrics=["accuracy"],
+                      steps_per_execution=per_call)
+        train_ds, _ = batch_pipeline(data.X_train, data.y_train, cfg["batch_size"], shuffle=True, repeat=False)
+        val_ds, _ = batch_pipeline(data.X_val, data.y_val, VAL_BATCH, shuffle=False, repeat=False)
+        fit_steps = {}
+    history = model.fit(train_ds, epochs=int(cfg["epochs"]), validation_data=val_ds, shuffle=False,  # pipeline shuffles
+                        verbose=0, callbacks=cbs, **fit_steps)
     h = {k: [float(v) for v in vals] for k, vals in history.history.items()}
     epochs_run = len(h.get("loss", []))
 

@@ -115,8 +115,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | CI VERIFIED | e6f67b0 | green |
 | 3.2 | MUST | S | Request timeout on the Gemini client | CI VERIFIED | d2bc89e | green |
 | 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | CI VERIFIED | 4.1a 0caebba; 4.1b d77ecda; 4.1c 5cd2d77 | green (all three) |
-| 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | DONE | see git log | pending |
-| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | NOT STARTED | | |
+| 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | CI VERIFIED | 0d9fd7f | green |
+| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | DONE | see git log | pending |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | NOT STARTED | | |
 | 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | NOT STARTED | | |
 | 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | NOT STARTED | | |
@@ -258,6 +258,32 @@ Item details (short form of the brief; the acceptance rules are binding):
   for 20 of 20 questions (rule: at least 18); same top-3 in the same order for 16 of 20, same
   top-3 as a set for 17 of 20. KEPT. Caveat: one short document, 15 passages.
   Files: backend/llm_api.py, core/rag.py, tests (llm_api, rag). Tests: 465 -> 467.
+- 5.1 (CNN speed), MNIST, CNN 2 conv x 16 filters, Adam lr 0.001, batch 32, 3 epochs, seed 42,
+  mains power, CPU only, one process, variants interleaved, median of the repeats:
+
+  | Variant | Total | of which fit | final evaluation | per epoch | Val acc | Test acc | Verdict |
+  |---------|-------|--------------|------------------|-----------|---------|----------|---------|
+  | old split sizes (60,000 train / 10,000 val), 3 repeats | 33.3 s | 31.5 s | 1.8 s | 10.4 s | 98.73 % | - | reference |
+  | new split (54,000 / 6,000 / 10,000 test), 3 repeats | 29.1 s (22.5 - 31.0) | 27.4 s | 1.8 s | 9.1 s | 98.62 % | 98.84 % | baseline |
+  | larger evaluation batch (4096 / 2048), 3 repeats | 29.9 s | 28.5 s | 1.4 s | 9.1 s | 98.62 % | 98.84 % | no gain: NOT ADOPTED |
+  | plain model.fit on NumPy arrays, 3 repeats | 30.3 s | 28.5 s | 1.6 s | 9.4 s | 97.90 % | 98.20 % | no gain: NOT ADOPTED |
+  | steps_per_execution=32, endless stream, 5 repeats | 25.5 s vs 30.5 s | 23.7 s | 1.8 s | 7.6 s | 98.50 % | 98.67 % | 16 % faster but WRONG, see below: REPLACED |
+  | steps_per_execution=32, finite stream (kept), 5 repeats | 24.8 s vs 30.4 s | 22.9 s | 1.9 s | 7.3 s | 98.42 % | 98.71 % | 18.5 % faster, test -0.13 points: KEPT |
+
+  The gap (39.6 s against 19 s). The split is not the cause: the new split is faster than
+  the old sizes (29.1 s against 33.3 s), and the final evaluation of all three parts costs
+  1.8 s. The same code gave 22.5 s to 31.0 s within one session, so the machine's state
+  (heat, background load) moves the number by a third. September's 6.3 - 7.0 s per epoch on
+  60,000 images was not reproduced (10.4 s today); the 39.6 s was not reproduced either
+  (29 - 30 s today). The cause is the machine, not a code change this pass could find.
+  A defect found on the way: with the app's endless data stream, steps_per_execution=32
+  rounds every epoch UP to a multiple of 32 batches (a new test showed 32 optimizer steps
+  where 28 were due), so a few batches were trained on twice. Long epochs now use a stream
+  that ends after one pass; the test checks that every batch runs exactly once.
+  dataset cache: not tried, because caching the batched data would freeze the shuffle order;
+  prefetch was already in the pipeline. Only epochs of 320 batches or more use the lever
+  (image models); tables keep one batch per call. Files: core/training.py,
+  tests/test_training.py. Tests: 467 -> 469.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -314,6 +340,13 @@ Item details (short form of the brief; the acceptance rules are binding):
   30 s for embeddings. These are judgement values, not measured ones.
 - 3.2: added MAX_TIMEOUT_RETRIES = 1 (not in the brief): without it a hung service would cost
   attempts x 120 s. Other transient errors (5xx) keep all their attempts.
+- 5.1: the first measured steps_per_execution variant met the 15 % rule but trained on some
+  batches twice per epoch, so it was replaced by a correct variant and timed again (5 repeats)
+  before being kept.
+- 5.1: the lever is used only when an epoch has at least 320 batches (10 calls of 32), so
+  small tables behave exactly as before and their live charts update after every batch.
+- 5.1: MNIST results for a given seed change slightly (test 98.84 % -> 98.71 % in this run)
+  because the batches are grouped differently. The README numbers are re-measured in 7.1.
 
 ## K. Real Gemini calls used
 
@@ -325,15 +358,16 @@ Item details (short form of the brief; the acceptance rules are binding):
 ## L. Known issues
 
 - The typical-range verdict compares validation accuracy, not test accuracy (by design, see J).
-- Embeddings are 768 numbers instead of 3,072: checked on one short document only (item 3.3).
-- CNN training about twice as slow as the September figure, unexplained (item 5.1).
 - Four small defects found in the bug hunt are reproduced but not fixed (section F, 4-7).
+- Embeddings are 768 numbers instead of 3,072: checked on one short document only (item 3.3).
+- CNN timings vary by about a third from run to run on the development laptop; the September
+  figure (19 s for 3 MNIST epochs) could not be reproduced (item 5.1).
+- The exported script trains with plain model.fit, without steps_per_execution.
 - The local-Ollama tutor path is not verified on the development laptop; do not claim it works.
 
 ## M. Exact next action
 
-Start item 5.1: write the 3.3 commit hash and its CI result into table G. On mains power,
-time 3 MNIST epochs three times with the old split sizes (60,000 train / 10,000 validation)
-and the new ones (54,000 / 6,000 / 10,000 test), training and evaluation timed separately.
-Then try steps_per_execution, a larger evaluation batch and dataset cache/prefetch one at a
-time; keep a change only if it is at least 15% faster with test accuracy within 0.3 points.
+Start item 3.4: write the 5.1 commit hash and its CI result into table G. Read the Gemini
+docs on implicit caching (minimum prompt size for the 2.5 models). Move the fixed tutor
+instructions into system_instruction for the plain Gemini chat path, order the user message
+stable-first, and record prompt and cached tokens before and after with at most 4 real calls.
