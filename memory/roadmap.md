@@ -1,0 +1,188 @@
+# Roadmap - engineering pass 2 (November 2026)
+
+The engineering log of this pass. One item per session; each item ends in one pushed commit.
+Statuses: NOT STARTED, IN PROGRESS, BLOCKED, DONE (tested, committed, pushed), CI VERIFIED,
+SKIPPED (with the reason), REVERTED (with the numbers).
+
+## A. Overview
+
+Deep Learning Tutor is a Streamlit workbench: datasets, Keras models, training, evaluation,
+Grad-CAM, script export, and a Gemini tutor with a knowledge base, an agent and an MCP server.
+This pass finishes the held-out test set work, makes API cost visible and bounded, hunts bugs,
+and tries a few measured optimisations. Small steps, measured, resumable.
+
+## B. Starting condition (checked 2026-11-12)
+
+- main at 979f56f, 5 commits, clean tree, CI green (GitHub Actions "tests": Python 3.13,
+  pyflakes, pytest, ubuntu-latest, about 2.5 minutes). 450 tests pass locally (figure from the
+  first pass; re-counted at the first full run of this pass).
+- Unfinished from the first pass: the exported script still makes the old 80/20 split; the AI
+  review prompt, the tutor context, the agent tools and the MCP server/client speak only of
+  validation accuracy; the CNN speed experiment was never run. CNN training measured about twice
+  as slow as the September figure (MNIST 3 epochs: 39.6 s against 19 s), cause unknown.
+- The Gemini layer already has (do not rebuild): SHA-256 cache keys over (kind, model, json mode,
+  thinking budget, system prompt, prompt); in-memory LRU response cache (256) and embedding cache
+  (5,000) behind a lock; only the training review, the fact-check and embeddings are cached, the
+  tutor chat never; one client per API key, reused; key rotation with a 60 s cooldown; bounded
+  retries with exponential backoff and jitter, server retry delay respected up to 20 s; errors
+  classified quota / transient / fatal; embeddings in batches of 100; documents de-duplicated by
+  content hash; a per-knowledge-base retrieval index; agent loop capped at 5 tool rounds with
+  repeated identical tool calls answered from memory; a cache of identical agent experiments.
+- The Gemini layer does not have (from reading the code, each to be confirmed in its item):
+  a request timeout; any record of calls / tokens / retries / cache hits; streaming of the tutor
+  answer; use of system_instruction in the chat; compact embedding storage (3,072-number Python
+  lists, stored in the cache and again in each chunk; about 200 MB for 2,000 chunks, an estimate
+  from the code, not a measurement).
+
+## C. Stack
+
+Python 3.13, Streamlit 1.64.0, TensorFlow 2.20.0 (CPU), Keras 3.15.1, NumPy 2.5.3, pandas 3.0.6,
+scikit-learn 1.9.1, google-genai 2.25.0, langchain-text-splitters 1.1.2, pypdf 6.19.0,
+pytest 9.1.1, pyflakes 4.0.0. Versions are pinned in requirements.txt; nothing is upgraded in
+this pass. Development machine: a CPU-only laptop (Intel Core Ultra 5 125H, 15.6 GB RAM).
+
+## D. Baseline measurements
+
+Empty until item 1.1.
+
+## E. Storage (measured 2026-11-12)
+
+- Tracked repo files: about 2 MB (largest: handwritten_seven.png 690 KB, five screenshots 0.9 MB).
+- Project environment site-packages: 2,063 MB, of which tensorflow 1,303, pyarrow 85,
+  matplotlib 30 (used for one colormap import), langchain_core + langsmith 14 (pulled in by
+  langchain-text-splitters, used for one splitter class).
+- pip cache in the run folder: 522 MB.
+
+## F. Bug list
+
+Empty until item 4.1.
+
+## G. Items
+
+| Item | Priority | Size | What | Status | Commit | CI |
+|------|----------|------|------|--------|--------|----|
+| 0.1 | MUST | S | Set up CLAUDE.md and this roadmap | DONE | see git log | pending |
+| 1.1 | MUST | S | Baseline benchmark; table "API calls per user action" | NOT STARTED | | |
+| 2.1 | MUST | M | Exported script uses the app's three-way split | NOT STARTED | | |
+| 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | NOT STARTED | | |
+| 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | NOT STARTED | | |
+| 3.2 | MUST | S | Request timeout on the Gemini client | NOT STARTED | | |
+| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | NOT STARTED | | |
+| 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | NOT STARTED | | |
+| 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | NOT STARTED | | |
+| 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | NOT STARTED | | |
+| 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | NOT STARTED | | |
+| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | NOT STARTED | | |
+| 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | NOT STARTED | | |
+| 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | NOT STARTED | | |
+| 7.2 | MUST | S | Private guide and run summary (outside the repo) | NOT STARTED | | |
+
+Item details (short form of the brief; the acceptance rules are binding):
+
+- 1.1 No code changes. On mains power run `python benchmarks/run_benchmarks.py --out
+  <run folder>/baseline.json` and copy about ten headline numbers into section D: no-op rerun,
+  Train click on Iris, chat message overhead, RAG search with and without the index, cold first
+  run, one MNIST epoch. From the code, fill a table "API calls per user action": tutor question,
+  with a knowledge base, with the fact-checker on, agent question (worst case), AI review,
+  learning a document of N chunks.
+- 2.1 core/codegen.py and tests/test_codegen.py. The script reproduces the app's rows for the
+  same seed and prints validation and test accuracy. Remove the "older two-way split" captions
+  and README lines.
+- 2.2 The AI review prompt (tts_engine.py), the tutor's project status (app.py project_status),
+  the agent tools (keep ranking by validation, also report test), mcp_server.py, mcp_client.py.
+  New UI text in English and natural Malayalam, technical terms in English. Remove the matching
+  README limitations. If too large, split into 2.2a (review + tutor + agent) and 2.2b (MCP).
+- 3.1 backend/usage.py, called by llm_api after every Gemini request: calls, retries, cache hits
+  and misses, prompt / output / cached tokens from response.usage_metadata (confirm field names
+  in the google-genai docs), seconds per call. Per Streamlit session, same fallback as
+  llm_api._state for tests. Sidebar expander "API usage (this session)", both languages. Tests
+  with a fake client.
+- 3.2 Confirm in the google-genai docs how to set a per-request timeout (HttpOptions), its unit,
+  and whether the SDK retries on its own. One timeout for generation, a shorter one for
+  embeddings, as named constants. A timeout is classified "transient"; SDK retries and
+  call_with_retry must not multiply. Test with a fake that raises the timeout error.
+- 4.1 Read backend/llm_api.py, backend/agent.py, agent_tools.py, core/rag.py,
+  components/chat_helpers.py and the ZIP loader in core/data.py. At most eight HYPOTHESES in
+  section F with severity P0-P3. Failing test first; fix only what a test reproduces; three fixes
+  at most, one commit each. Unconfirmed leads: fact_check retries with the selected model after
+  ANY LLMError (even "all keys rate-limited"); embed_texts trusts result.embeddings only by
+  count; rag.fingerprint looks at the first and last chunk id only; app.py answer() leaves the
+  user message in history with no reply when Gemini fails.
+- 3.3 Measure first with tracemalloc (500-chunk knowledge base, embedding cache). Then float32
+  NumPy arrays shared by cache and chunks. If the docs confirm output_dimensionality for
+  gemini-embedding-001, try 768 on 20 fixed questions over deep_learning_study_guide.txt (at
+  most 3 real embedding calls). Keep only if memory falls at least 4x and top-3 is unchanged for
+  float32, or at least 18 of 20 questions keep the same first result for the smaller dimension.
+- 5.1 Explain the 39.6 s against 19 s gap first: three repeats of 3 MNIST epochs on mains power,
+  old split sizes against new, training and evaluation timed separately. Then one lever at a
+  time (steps_per_execution, larger evaluation batch, dataset cache/prefetch). Keep only if at
+  least 15% faster with test accuracy within 0.3 points; otherwise undo and record the numbers.
+- 3.4 Fixed instructions into system_instruction; user message stable-first (instructions,
+  knowledge base, history, status, question). Read the docs on implicit caching and its minimum
+  prompt size for the 2.5 models. At most 4 real calls: prompt and cached tokens before/after.
+  Keep only if all chat tests pass and prompt tokens do not rise.
+- 3.5 Plain English tutor answer only (not agent mode, not Malayalam JSON mode). Confirm
+  generate_content_stream in the docs. Retry only before the first chunk. At most 3 real calls:
+  time to first text and total time. Streaming shortens the wait for the first words, not the
+  total time: say exactly that.
+- 6.1 Measure the import time of langchain_text_splitters and count the packages only it needs
+  (`python -m pip show`, no installs). Replace with a short recursive splitter of our own only
+  if that removes at least 8 packages or 0.3 s from the first document upload and chunk-level
+  tests still pass. Otherwise "kept, with numbers". Leave matplotlib alone unless the same test
+  shows a gain of that size.
+- 6.2 For every tracked file that is not code or a test, find what references it. List dead
+  functions with search. Remove only what has zero references, in one commit; prove install +
+  tests + app start afterwards. In the run folder delete only the pip cache, the clone-check
+  folder and temp contents.
+- 7.1 Full tests and pyflakes. Re-run the 1.1 benchmark and benchmarks/verify_models.py. Add
+  "Second pass, November 2026" to docs/PERFORMANCE.md with a before/after table including
+  everything tried and undone. Update README (features, results, limitations still true, link
+  to this roadmap). Run scripts/demo_walk.py once only if the UI changed; refresh only the
+  screenshots that differ. Fresh clone in the run folder, tests there. Push. CI green.
+- 7.2 Private guide, its HTML and the run summary, outside the repo. Nothing is committed.
+
+## H. Measurements before and after
+
+None yet. One row per item that changes a measured number.
+
+## I. Ideas evaluated and rejected (no code written)
+
+- Explicit Gemini context caching: prompts are a few thousand tokens and differ per question;
+  storage is billed and a minimum size applies. Not worth it for a single-user tutor.
+- Batch API: for background jobs. Every call here is a person waiting for an answer.
+- Moving to another Gemini API surface (Interactions): novelty, no measured need.
+- In-flight request coalescing: one Streamlit session runs one script at a time; a second
+  identical request cannot be in flight.
+- Circuit breaker: the per-key 60 s cooldown and the bounded retries already stop hammering.
+- Async rewrite and connection pooling: the SDK client is already reused per key; Streamlit runs
+  the script synchronously.
+- Persistent (on-disk) response cache: answers depend on the session's model and data; a stale
+  review of an old model is worse than one extra call.
+- Database, code splitting, bundle size: there is no database and no JavaScript build.
+
+## J. Decisions taken for me
+
+- 0.1: the local main branch had no upstream configured, so `git status -sb` could not show
+  whether it is level with origin/main. Set the upstream to origin/main (local git config only;
+  pushes still use exactly `git push origin main`).
+- 0.1: the privacy check is run twice before each push, once against the repo's `.env` and once
+  against the old private project's `.env`, because both hold keys.
+- 0.1: the full test suite was not run for this item (documentation only, no code touched);
+  the 450-test count is re-verified at the first item that changes code.
+
+## K. Real Gemini calls used
+
+0 of 12.
+
+## L. Known issues
+
+- Exported script still uses the old 80/20 split (item 2.1).
+- Review prompt, tutor context, agent tools and MCP speak only of validation accuracy (item 2.2).
+- CNN training about twice as slow as the September figure, unexplained (item 5.1).
+- The local-Ollama tutor path is not verified on the development laptop; do not claim it works.
+
+## M. Exact next action
+
+Start item 1.1: write the 0.1 commit hash and its CI result into table G, then run the baseline
+benchmark on mains power (output to the run folder), fill section D and the "API calls per user
+action" table from the code. No code changes.
