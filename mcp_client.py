@@ -39,10 +39,6 @@ class MCPClient:
         self._connected = False
         self._server_info = None
 
-    def is_available(self) -> bool:
-        """Check if httpx is installed."""
-        return HTTPX_AVAILABLE
-
     def _url_error(self):
         parsed = urlparse(self.server_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -175,15 +171,3 @@ class MCPClient:
         if include_model:
             status = self.get_job_status(job_id, include_model=True)
         return status
-
-    def get_logs(self, job_id: str) -> list:
-        """Retrieve training logs for a job."""
-        if not HTTPX_AVAILABLE or self._url_error():
-            return []
-        try:
-            with self._client(10.0) as client:
-                resp = client.get(f"{self.server_url}/logs/{job_id}")
-                resp.raise_for_status()
-                return resp.json().get("logs", [])
-        except (httpx.HTTPError, ValueError):
-            return []

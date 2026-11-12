@@ -119,8 +119,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | CI VERIFIED | 9e7fdb8 | green |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | REVERTED | 1659a77 | green |
 | 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | CI VERIFIED | 191899a | green |
-| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | DONE | see git log | pending |
-| 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | NOT STARTED | | |
+| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | DONE | 6e7a73c | running when checked |
+| 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | DONE | see git log | pending |
 | 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | NOT STARTED | | |
 | 7.2 | MUST | S | Private guide and run summary (outside the repo) | NOT STARTED | | |
 
@@ -341,6 +341,20 @@ Item details (short form of the brief; the acceptance rules are binding):
   matplotlib, same test: 6 packages only it needs and about 125 ms to import its colormaps.
   Below both thresholds: KEPT, untouched.
   Files: core/rag.py, requirements.txt, tests/test_rag.py. Tests: 473 -> 478.
+- 6.2 (cleanup audit), by plain search over the tracked files (a script in the run folder):
+  every tracked file that is not code or a test was checked for mentions elsewhere, and every
+  function, class and module-level name defined outside tests for a second occurrence.
+  Removed (zero references): iris_dataset.csv and wine_dataset.csv (15 KB; nothing in the
+  code, the tests, the README or the workflow mentions them, and the Iris file has no label
+  column so it could not even be used as an upload); MCPClient.is_available and
+  MCPClient.get_logs in mcp_client.py (never called; the server's /logs route stays and is
+  tested directly). Kept on purpose although nothing mentions them: .gitignore and pytest.ini
+  (read by git and pytest), __all__ in core/training.py (a convention). Kept: rag.bm25_scores
+  (used by tests only, as a convenience entry point). Tracked files: 75 -> 73.
+  Proof afterwards: full suite 478 passed, pyflakes silent, and the app started headless
+  (benchmark group "startup": server healthy after 1.35 s, first page after 5.37 s).
+  Outside the repo: the run folder was 547 MB (pip cache 524 MB, old clone check 7 MB, temp
+  10 MB); those three were deleted, leaving 7 MB of logs, scripts and result files.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -432,7 +446,8 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 6.2: write the 6.1 commit hash and its CI result into table G. For every tracked
-file that is not code or a test, find what references it; list dead functions with search;
-remove only what has zero references, in one commit; prove tests + app start afterwards. In
-the run folder delete only the pip cache, the clone-check folder and temp contents.
+Start item 7.1: write the 6.2 commit hash and its CI result into table G. Full tests and
+pyflakes; re-run benchmarks/run_benchmarks.py (compare with section D) and
+benchmarks/verify_models.py; add "Second pass, November 2026" to docs/PERFORMANCE.md; update
+the README; run scripts/demo_walk.py once (the UI changed: usage panel, streaming, captions)
+and refresh only the screenshots that differ; fresh clone in the run folder and tests there.
