@@ -551,6 +551,8 @@ def _list_zip_images(zf, lim, report):
 
     if not candidates:
         raise DataError("No images (.png, .jpg, .jpeg, .bmp, .gif, .webp) were found in the ZIP.")
+    if any(info.flag_bits & 0x1 for info, _ in candidates):      # bit 0 = the member is encrypted
+        raise DataError("The ZIP is password-protected. Create it again without a password.")
     if len(candidates) > lim["max_images"]:
         raise DataError(f"The ZIP contains {len(candidates):,} images; the limit is {lim['max_images']:,}.")
     declared = sum(info.file_size for info, _ in candidates)

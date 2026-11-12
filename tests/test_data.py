@@ -433,3 +433,24 @@ def test_zip_summary_rejects_unsafe_and_bad_archives():
         D.zip_summary(b"definitely not a zip")
     with pytest.raises(D.DataError):
         D.zip_summary(make_zip({"only_text/readme.txt": b"hi"}))
+
+
+def _mark_encrypted(zip_bytes):
+    """Set the 'encrypted' flag on every member, as a password-protected ZIP has it
+    (bit 0 of the general-purpose flags in each local header and directory entry)."""
+    import struct
+    raw = bytearray(zip_bytes)
+    for signature, offset in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        at = raw.find(signature)
+        while at >= 0:
+            flags = struct.unpack_from("<H", raw, at + offset)[0]
+            struct.pack_into("<H", raw, at + offset, flags | 1)
+            at = raw.find(signature, at + 4)
+    return bytes(raw)
+
+
+def test_password_protected_zip_gives_a_friendly_error():
+    protected = _mark_encrypted(class_zip())
+    for read in (D.zip_summary, D.load_image_zip):          # the summary already says so, before Train
+        with pytest.raises(D.DataError, match="password-protected"):
+            read(protected)
