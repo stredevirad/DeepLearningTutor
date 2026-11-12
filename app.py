@@ -755,7 +755,9 @@ def render_result_card():
         notes.append(T("weights_restored_note", best=outcome["best_epoch"], run=outcome["epochs_run"]))
     if cfg.get("dataset") in BENCHMARKS:
         lo, hi, _ = BENCHMARKS[cfg["dataset"]]
-        tier, _ = performance_verdict(cfg["dataset"], accuracy)
+        # The verdict gives tuning advice, so it is based on VALIDATION accuracy: acting on
+        # the test accuracy would be tuning on the test set.
+        tier, _ = performance_verdict(cfg["dataset"], final.get("val_accuracy", 0.0))
         notes.append(T(f"verdict_{tier}", dataset=cfg["dataset"], lo=f"{lo:.0%}", hi=f"{hi:.1%}"))
     gap = final.get("train_accuracy", 0.0) - final.get("val_accuracy", 0.0)
     if gap > 0.1:

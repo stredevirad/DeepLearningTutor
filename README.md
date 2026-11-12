@@ -1,110 +1,46 @@
 # 🧠 Deep Learning Tutor
 
-**Design, train, understand, and test neural networks, without writing code.**
+[![tests](https://github.com/stredevirad/DeepLearningTutor/actions/workflows/tests.yml/badge.svg)](https://github.com/stredevirad/DeepLearningTutor/actions/workflows/tests.yml)
 
-Deep Learning Tutor is a Streamlit workbench for learning deep learning by doing:
+**Design, train, understand and test small neural networks, without writing code.**
 
-1. Pick a dataset and configure a network.
-2. Train it while live loss and accuracy curves update.
-3. Inspect the results.
-4. Test the model on your own inputs.
+Deep Learning Tutor is a Streamlit app for learning deep learning by doing:
 
-An AI tutor explains the results in English or Malayalam. It runs on Google Gemini (online) or Ollama (offline).
+1. Pick a dataset and configure a network in the sidebar.
+2. Train it while the loss and accuracy curves update live.
+3. Read the results: test accuracy, confusion matrix, precision / recall / F1 per class.
+4. Ask an AI tutor about them, in English or Malayalam.
+5. Test the model on your own input, see a Grad-CAM heatmap, and export the model.
 
-It began as an internship project. It is an educational project, not a production service.
+It is an educational project that runs on a laptop CPU. It is not a production service.
 
 ```
-Configure  →  Train (live curves)  →  Result  →  Understand (charts, AI review, tutor)  →  Test & export
+Configure  →  Train (live curves)  →  Result  →  Understand (charts, AI tutor)  →  Test & export
 ```
 
----
+## Screenshots
 
-## Features
+| Train: live curves and the result card | Understand: curves, confusion matrix, per-class table |
+|---|---|
+| ![Result card after training on Iris](docs/images/result_card.png) | ![Charts, confusion matrix and per-class table](docs/images/charts.png) |
 
-### Train
-- **Two network types:**
-  - A Simple NN (dense layers) for tables.
-  - A small CNN (1–3 conv + max-pool blocks) for 28×28 images.
-- **Built-in datasets:**
-  - Simple NN: Iris, Wine, Breast Cancer, Digits.
-  - CNN: MNIST, Fashion-MNIST.
-- **Your own data.** A summary appears in the sidebar *before* you train.
-  - **CSV:** you choose the target column.
-    - Numeric columns are standardised.
-    - Low-cardinality text columns are one-hot encoded.
-    - ID and free-text columns are ignored and listed.
-    - Rows with missing values are removed and counted.
-    - Regression-like targets are rejected with an explanation.
-  - **ZIP of class folders** (`cats/…`, `dogs/…`):
-    - Checked for path traversal, file count and size, and zip bombs.
-    - Empty classes and class imbalance are reported.
-    - Every image goes through the same 28×28 preprocessing that the Test tab uses.
-- **Hyperparameters.** Layers, nodes or filters, epochs, learning rate, batch size, optimizer (Adam, SGD or RMSprop), dropout, early stopping and a random seed.
-  - Defaults depend on the network type.
-  - Simple NN: lr 0.01, 50 epochs, batch 16.
-  - CNN: lr 0.001, 5 epochs, batch 32.
-- **Correct ML practice:**
-  - The data is split first (stratified), and the scaler and encoder are fitted on the training split only.
-  - The final metrics are evaluated on the weights the model actually ends up with. That matters when early stopping restores the best epoch.
-- **Live training display.** One progress area with live loss and accuracy curves, followed by a result card: validation accuracy, validation loss, epochs trained, parameter count, and how the result compares with typical accuracy for the dataset.
+| Test: prediction and Grad-CAM | Ask: the AI tutor |
+|---|---|
+| ![Grad-CAM on a handwritten 7](docs/images/gradcam.png) | ![An answer from the AI tutor](docs/images/tutor.png) |
 
-### Understand
-- **Interactive charts.** Loss and accuracy curves mark the "best epoch" when early stopping restored it. The confusion matrix names the most frequent mistake. The model architecture and parameter counts are shown too.
-- **AI Professor's review (on request).** A short critique of the run, calibrated against typical results, so an under-trained 83 % Iris model is called under-performing rather than "brilliant". **Listen** reads it aloud with gTTS in English or Malayalam.
-- **Grad-CAM (on request).** For an image prediction, it shows which pixels drove the decision.
-  - Keras-3-compatible, computed from the pre-softmax score.
-  - On correctly classified MNIST digits, the heat sits on the digit at 2.8× chance.
+The whole interface is also available in Malayalam:
 
-### Ask
-- **AI Tutor chat.** Three explanation levels:
-  - **Beginner:** plain language and analogies, no maths.
-  - **Intermediate:** technical, with code.
-  - **Advanced:** maths and implementation detail.
+![The result screen in Malayalam](docs/images/malayalam.png)
 
-  Code in answers is rendered as proper code blocks, and you can attach images, PDFs and text files. In the Malayalam interface, Gemini answers bilingually.
-- **Agent mode (Gemini function calling).** The tutor can use five tools, and shows each call live:
-  - `run_experiment`: trains real models;
-  - `diagnose_training`: diagnoses training curves;
-  - `compare_experiments`: compares runs;
-  - `generate_code`: generates code;
-  - `explain_concept`: explains concepts.
-
-  Every argument is validated.
-- **Knowledge base (RAG).** Upload PDF or TXT study material. It is chunked (with LangChain's text splitter) and embedded with Gemini `gemini-embedding-001` or Ollama `nomic-embed-text`.
-  - Questions retrieve the closest passages. Vectors from different backends are never mixed, and BM25 keyword search is the fallback.
-  - The same file is never learned twice.
-- **Document check (optional).** A second LLM call (an LLM acting as judge) estimates how much of an answer the retrieved passages support. Treat it as a helpful signal, not a proof.
-
-### Test & export
-- **Predictions:**
-  - Upload an image, or try the bundled samples: a handwritten 7, a sneaker and an ankle boot.
-  - For Simple NNs, fill in feature values or pick a random validation example.
-  - Probabilities are labelled as the network's softmax output, not as "confidence".
-- **Downloads:** the trained model as `.keras`, and an **equivalent Python script** that reproduces the run: same split, preprocessing, seed, architecture and hyperparameters, including custom CSV and ZIP data.
-
-### Remote training (advanced)
-An **MCP training server** (`mcp_server.py`) can train built-in datasets on another machine, for example one with a GPU. The app shows its progress live and downloads the trained model. See [MCP remote training](#mcp-remote-training-optional).
+The screenshots are made by [`scripts/demo_walk.py`](scripts/demo_walk.py), which drives the
+running app in a real browser and fails if any screen shows an error.
 
 ---
 
-## Verified results
+## Quick start
 
-Measured on a laptop CPU (Intel Core Ultra 5 125H) with seed 42, using `python benchmarks/verify_models.py`.
-
-| Configuration | Validation accuracy | Training time |
-|---|---:|---:|
-| Iris, 2 × 16 dense, Adam lr 0.01, batch 16, 50 epochs (the defaults) | **96.7 %** | 1.6 s |
-| Iris, same settings, 100 epochs | 93.3 % | 2.5 s |
-| MNIST, CNN 2 conv × 16 filters, Adam lr 0.001, batch 32, 3 epochs | **98.7 %** | 19 s |
-| Fashion-MNIST, same CNN, 3 epochs | 89.4 % | 24 s |
-
-The bundled `handwritten_seven.png` is predicted as 7. Grad-CAM heat on 300 correctly classified MNIST digits is a median 2.8× chance on the digit's pixels; 2 of the 300 maps were empty.
-
----
-
-## Setup
-
-Requires **Python 3.11–3.13**. Verified on Windows 11 with Python 3.13.0, TensorFlow 2.20.0, Keras 3.15.1 and Streamlit 1.64.0. A clean install from the pinned `requirements-dev.txt` was verified, and `pip check` passed.
+Tested with **Python 3.13**, locally on Windows 11 and in CI on Ubuntu. Other Python
+versions were not tested for this release.
 
 ### Windows (PowerShell)
 
@@ -113,11 +49,9 @@ git clone https://github.com/stredevirad/DeepLearningTutor.git
 cd DeepLearningTutor
 py -3.13 -m venv venv
 .\venv\Scripts\Activate.ps1          # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-python -m pip install --upgrade pip
-pip install -r requirements.txt      # or requirements-dev.txt to also run the tests
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
-
-In `cmd.exe`, activate with `venv\Scripts\activate.bat` instead.
 
 ### macOS / Linux
 
@@ -126,180 +60,254 @@ git clone https://github.com/stredevirad/DeepLearningTutor.git
 cd DeepLearningTutor
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
-### API keys (`.env`)
+Streamlit opens <http://localhost:8501>. Work through the tabs:
+**1. Configure & Train → 2. Visualizations → 3. AI Tutor → 4. Test & Export**.
 
-1. Copy the example file: `copy .env.example .env` on Windows, or `cp .env.example .env` elsewhere.
-2. Put one or more Gemini keys in `.env`, separated by commas. The app rotates to another key when one hits its rate limit. You can get keys at <https://aistudio.google.com/apikey>.
+The install is large (TensorFlow: about 1 GB to download). **Training, charts, Grad-CAM and
+export work without any API key.** Only the AI tutor needs one of the two options below.
+
+### AI tutor, option 1: Google Gemini (online)
+
+1. Copy the example file: `copy .env.example .env` (Windows) or `cp .env.example .env`.
+2. Put one or more Gemini keys in `.env`, separated by commas. The app rotates to the next
+   key when one hits its rate limit. Keys: <https://aistudio.google.com/apikey>.
 
    ```
    GEMINI_API_KEYS=your-first-key,your-second-key
    ```
 
-3. `.env` is git-ignored, so **never commit it**. If a key is ever pushed anywhere public, revoke it in AI Studio.
+3. `.env` is git-ignored. **Never commit it.** If a key is ever published, revoke it.
 
-Without a key, training, charts, Grad-CAM and export still work. Only the AI features need Gemini or Ollama.
+### AI tutor, option 2: Ollama (offline)
 
-### Ollama (optional, offline AI)
-
-1. Install Ollama from <https://ollama.com>. On Windows the installer adds `ollama` to your PATH.
-2. Pull a chat model. You can also pull the embedding model used for semantic knowledge-base search:
+1. Install Ollama from <https://ollama.com>.
+2. Pull the chat model the app uses by default, and optionally the embedding model for
+   semantic search in your documents:
 
    ```
    ollama pull llama3.2:1b
    ollama pull nomic-embed-text
    ```
 
-3. In the sidebar, under **AI tutor**, choose **Ollama (offline)**. The **AI model settings** section shows the server status.
-   - If the server is not running, it offers **Start Ollama server**.
-   - It can download a missing model for you.
-4. If Ollama runs on a different address, set `OLLAMA_HOST` in `.env`.
+3. In the sidebar, under **AI tutor**, choose **Ollama (offline)**.
 
-Small local models answer in English only, and Agent mode needs Gemini (it relies on function calling).
+The offline tutor does not work until a chat model has been pulled. Small local models
+answer in English only, and agent mode needs Gemini.
 
 ---
 
-## Run the app
+## Features
 
-```bash
-streamlit run app.py
-```
+### Train
+- **Two network types.** A Simple NN (dense layers) for tables, and a small CNN
+  (1–3 conv + max-pool blocks) for 28×28 images.
+- **Built-in datasets.** Iris, Wine, Breast Cancer, Digits (tables); MNIST, Fashion-MNIST (images).
+- **Your own data**, with a summary in the sidebar before you train:
+  - **CSV**: you choose the target column. Numeric columns are standardised, text columns
+    with few values are one-hot encoded, ID and free-text columns are ignored and listed,
+    rows with missing values are removed and counted, regression-like targets are rejected.
+  - **ZIP of class folders** (`cats/…`, `dogs/…`): checked for path traversal, file count,
+    size and zip bombs. Limits: 25 MB CSV, 100 MB ZIP, 10,000 images.
+- **Hyperparameters.** Layers, nodes or filters, epochs, learning rate, batch size,
+  optimizer (Adam, SGD, RMSprop), dropout, early stopping and a random seed.
+- **Three data splits, each with one job:**
 
-Streamlit opens <http://localhost:8501>. Work through the tabs: **1. Configure & Train → 2. Visualizations → 3. AI Tutor → 4. Test & Export**.
+  | Split | Used for | Tables and uploads | MNIST / Fashion-MNIST |
+  |---|---|---|---|
+  | Training | the model learns from it | 70 % | 54,000 images |
+  | Validation | live curves, early stopping | 15 % | 6,000 images |
+  | Test | evaluated **once**, after training: headline accuracy, confusion matrix, per-class table | 15 % | the official 10,000 test images |
 
-`.streamlit/config.toml` turns off Streamlit's file watcher, for speed. While you are editing the code, run it with auto-reload instead:
+  The split is stratified (same class proportions in every part) and fixed by the seed. The
+  scaler and the one-hot encoder are fitted on the training rows only. When a dataset is too
+  small for every class to appear in all three parts, the app falls back to 80 % training /
+  20 % validation and says clearly that its number is a validation accuracy.
+- **Honest numbers.** Metrics are computed on the weights the model actually ends up with
+  (early stopping restores the best epoch). The size of the test set is shown beside the
+  accuracy, and small test sets get a note on how much one wrong prediction moves it.
 
-```bash
-streamlit run app.py --server.fileWatcherType auto --server.runOnSave true
-```
+### Understand
+- **Interactive charts.** Loss and accuracy curves (training against validation), the
+  confusion matrix on the test set with its most frequent mistake named, precision, recall
+  and F1 per class, and the model architecture with parameter counts.
+- **AI Professor's review (on request).** A short critique of the run. The verdict
+  (below / within / above the typical range for the dataset) is computed in Python, so an
+  under-trained model is not praised. **Listen** reads it aloud (gTTS, English or Malayalam).
+- **Grad-CAM (on request).** For an image prediction, shows which pixels drove the decision.
 
-### Custom datasets
-In the sidebar, open **Use your own data**. The expander shows how every column or class folder will be used before you train.
+### Ask
+- **AI tutor chat** at three levels (beginner, intermediate, advanced). Code in answers is
+  shown as code blocks. You can attach images, PDFs and text files.
+- **Agent mode (Gemini function calling).** The tutor can call five tools and shows each
+  call live: `run_experiment` (trains real models), `diagnose_training`,
+  `compare_experiments`, `generate_code`, `explain_concept`. Every argument is validated.
+- **Knowledge base (RAG).** Upload PDF or TXT study material. Questions retrieve the closest
+  passages (cosine similarity on embeddings, BM25 keyword search as the fallback).
+- **Document check (optional).** A second LLM call estimates how much of an answer the
+  retrieved passages support. Treat it as a signal, not a proof.
 
-The CSV needs a header row, and the target column must hold categories (such as a species or yes/no), not a continuous number. The ZIP needs one folder of images per class. Limits: 25 MB for a CSV, 100 MB for a ZIP, and 10,000 images.
+### Test & export
+- **Predictions.** Upload an image or try the bundled samples; for tables, fill in feature
+  values or pick a random test example and compare with its true class.
+- **Downloads.** The trained model as `.keras`, and a standalone Python script with the same
+  preprocessing, architecture, hyperparameters and seed (see Limitations for what the script
+  does not reproduce yet).
 
-### MCP remote training (optional)
-
-On the machine that should do the training:
-
-```bash
-python mcp_server.py --port 8765                 # listens on 127.0.0.1 only (safe default)
-```
-
-To reach it from another computer:
-
-1. Set the same `MCP_AUTH_TOKEN` in both machines' `.env` files.
-2. Run `python mcp_server.py --host 0.0.0.0`, or use a tunnel such as `ngrok http 8765`.
-
-In the app, open **Advanced: remote training (MCP)**, turn it on, paste the URL and click **Connect**. Built-in datasets then train on the server as background jobs; custom uploads always train locally.
-
-The server exposes these endpoints:
-
-- `GET /health`
-- `GET /tools`
-- `POST /call`, with the tools `train_model_remote` and `get_training_status`
-- `GET /logs/{job_id}`
-
-If the optional `mcp` package is installed, it also serves an MCP SSE endpoint at `/sse`. Arguments are validated against fixed ranges, the job queue is bounded, and no user input is ever executed.
+### Remote training (optional)
+`mcp_server.py` trains the built-in datasets on another machine as background jobs; the app
+shows the progress and downloads the model. It listens on `127.0.0.1` by default and
+supports a bearer token (`MCP_AUTH_TOKEN`). Start it with `python mcp_server.py --port 8765`,
+then open **Advanced: remote training (MCP)** in the sidebar.
 
 ---
 
-## Tests & benchmarks
+## Measured results
 
-```bash
-pip install -r requirements-dev.txt
-pytest                      # 432 tests, about 4 minutes on a laptop CPU
-pytest -m "not slow"        # quick subset (no model training)
-```
+Measured on 2026-11-12 with `python benchmarks/verify_models.py` on a laptop CPU
+(Intel Core Ultra 5 125H, no GPU), seed 42, Python 3.13.0, TensorFlow 2.20.0.
 
-- **Hermetic.** `tests/conftest.py` blocks every network connection, including the local Ollama and MCP ports. `.env` is never loaded, and every Gemini and Ollama call is faked.
-- **Coverage includes:**
-  - data loading, including malicious ZIPs;
-  - the CSV column analysis;
-  - leakage checks and reproducibility;
-  - Grad-CAM and image preprocessing;
-  - chat parsing and rendering;
-  - LLM retry and key rotation, and caching;
-  - Ollama helpers and the status cache;
-  - RAG for both backends, and deduplication;
-  - the hallucination checker;
-  - the agent tools and the agent loop;
-  - the MCP routes and client;
-  - exported code;
-  - translations;
-  - end-to-end AppTest runs of every tab.
+| Configuration | Validation accuracy | Test accuracy | Training time |
+|---|---:|---:|---:|
+| Iris, 2 × 16 dense, Adam lr 0.01, batch 16, 50 epochs (the defaults) | 100.0 % (22 rows) | **90.9 %** (22 rows) | 1.6 s |
+| MNIST, CNN 2 conv × 16 filters, Adam lr 0.001, batch 32, 3 epochs | 98.6 % (6,000) | **98.8 %** (10,000) | 39.6 s |
+| Fashion-MNIST, same CNN, 3 epochs | 91.1 % (6,000) | **89.6 %** (10,000) | 35.7 s |
 
-Performance and accuracy can be reproduced:
+How to read this table:
 
-```bash
-python benchmarks/run_benchmarks.py --out results.json        # start-up, rerun and component timings
-python benchmarks/verify_models.py --out models.json          # accuracy + Grad-CAM checks (downloads MNIST)
-python benchmarks/browser_timings.py http://localhost:8501 --out browser.json   # needs: pip install playwright
-```
+- **Iris shows why the test set matters.** Validation says 100 %, the test rows say 90.9 %:
+  2 of 22 flowers wrong. With 22 rows one mistake is 4.5 points, so small differences on
+  Iris mean little, but "100 %" would have been too rosy.
+- On MNIST and Fashion-MNIST the two numbers agree to within 1.5 points, as expected with
+  thousands of examples.
+- No setting was chosen by looking at the test accuracy.
 
-Results and method: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+Other checks from the same run:
+
+- The bundled `handwritten_seven.png` is predicted as 7; its Grad-CAM heat lies on the
+  stroke 3.1× more than chance.
+- Grad-CAM on 300 correctly classified MNIST validation digits: the heat lies on the digit's
+  pixels a median 2.3× more than chance; 4 of the 300 maps were empty.
+- `fashion_ankle_boot.png` is predicted as Ankle boot. `fashion_sneaker.png` is a line
+  drawing, unlike the photos the model was trained on, and is predicted as **Bag**.
+
+Speed of the user interface (for example 184 ms to react to a sidebar switch with a trained
+model) was measured earlier, on 2026-09-30 and 2026-10-01, and is documented in
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md). Those numbers were not re-measured for this release.
 
 ---
 
 ## Architecture
 
-A diagram of the modules, and the path of one training run and one tutor question, are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A diagram of the modules, and the path of one training run and one tutor question, are in
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ```
 app.py                     Streamlit UI: sidebar + four lazy tabs (only the open tab runs)
 ├── core/                  UI-independent logic (unit-tested)
-│   ├── data.py            datasets, leak-free split → fit-on-train preprocessing, CSV analysis, safe ZIP loader
-│   ├── models.py          Simple NN / CNN builders, optimizers, .keras (de)serialisation
-│   ├── training.py        config validation + limits, seeding, fast tf.data training loop, evaluation
-│   ├── image_preprocessing.py   one preprocessing for training ZIPs and Test-tab uploads
-│   ├── gradcam.py         Keras-3-safe Grad-CAM
+│   ├── data.py            datasets, train/validation/test split, fit-on-train preprocessing, CSV analysis, safe ZIP loader
+│   ├── models.py          Simple NN / CNN builders
+│   ├── training.py        config validation, seeding, training loop, evaluation, per-class metrics
+│   ├── image_preprocessing.py   one preprocessing for training ZIPs and test uploads
+│   ├── gradcam.py         Grad-CAM that works under Keras 3
 │   ├── codegen.py         "equivalent Python code" generator
-│   └── rag.py             PDF/TXT extraction, chunking, dedup, cosine (per backend) + BM25 retrieval index
-├── backend/
-│   ├── llm_api.py         Gemini (google-genai): key rotation, backoff, caching, embeddings
-│   ├── agent.py           function-calling agent loop
-│   └── ollama_api.py      Ollama detection/start, cached status, models, embeddings
-├── components/
-│   ├── chat_helpers.py    bilingual JSON parsing, markdown/code rendering, Ollama chat, document check
-│   ├── training_ui.py     live training callback (throttled redraws)
-│   └── visualizations.py  Altair charts, Grad-CAM overlay
+│   └── rag.py             PDF/TXT extraction, chunking, cosine + BM25 retrieval
+├── backend/               Gemini (key rotation, retry, cache), agent loop, Ollama
+├── components/            live training callback, Altair charts, chat parsing and rendering
 ├── config/                translations (English + Malayalam), prompts, session-state defaults
-├── agent_tools.py         tools the Gemini agent can call (validated arguments)
-├── tts_engine.py          calibrated training review + gTTS narration
-├── mcp_server.py / mcp_client.py   remote training server (REST + optional MCP SSE) and client
-├── benchmarks/            performance, browser-timing and accuracy scripts
+├── agent_tools.py         the five tools the Gemini agent can call
+├── tts_engine.py          calibrated training review + speech
+├── mcp_server.py / mcp_client.py   optional remote training
+├── benchmarks/            accuracy and speed scripts
+├── scripts/demo_walk.py   browser walk through the app, makes the screenshots
 └── tests/                 pytest suite
 ```
 
-`app.py`, `agent_tools.py` and `mcp_server.py` all train through `core/`, so the preprocessing, seeding and evaluation are identical everywhere. A new training run replaces the model together with everything derived from it: the scaler, class names, predictions, Grad-CAM results and the review. The model is never paired with a stale preprocessor.
+`app.py`, `agent_tools.py` and `mcp_server.py` all train through `core/`, so the split, the
+preprocessing, the seeding and the evaluation are the same code everywhere.
 
-The sample files `handwritten_seven.png`, `fashion_sneaker.png`, `fashion_ankle_boot.png`, `iris_dataset.csv`, `wine_dataset.csv` and `deep_learning_study_guide.txt` are for trying out the Test tab, the custom uploads and the knowledge base.
+---
+
+## Tests
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest                 # 450 tests, 2–4 minutes on a laptop CPU
+python -m pytest -m "not slow"   # quick subset (no model training)
+python -m pyflakes .
+```
+
+- **Hermetic.** `tests/conftest.py` blocks every network connection, `.env` is never loaded,
+  and every Gemini and Ollama call is faked. The same commands run in GitHub Actions on
+  every push.
+- **What the tests prove about the data:** the three splits share no rows; the scaler and
+  the encoder are fitted on training rows only; the test split is evaluated exactly once
+  and only after training; the per-class numbers match scikit-learn.
+- **Also covered:** malicious ZIPs, CSV analysis, reproducibility, Grad-CAM, image
+  preprocessing, chat parsing, LLM retry and key rotation, RAG, the agent loop and tools,
+  the remote-training server, the exported code, translations, and end-to-end runs of
+  every tab.
+
+Reproduce the measurements:
+
+```bash
+python benchmarks/verify_models.py --out models.json     # accuracy + Grad-CAM (downloads MNIST once)
+python benchmarks/run_benchmarks.py --out results.json   # start-up, rerun and component timings
+```
 
 ---
 
 ## Limitations
 
-- **The same validation set is used twice.** It is used for early stopping and for the reported metrics, so the numbers are slightly optimistic. MNIST and Fashion-MNIST use their official test split as the validation set. A separate test split would be the next step.
-- **Deliberately small models.** The models are for teaching, with CPU training in seconds, not state-of-the-art accuracy.
+- **The test set is not carried through every part yet.** The main screen uses it. These
+  parts still work with validation numbers, and are labelled as such:
+  - the exported Python script makes the older two-way split (80 / 20; for MNIST the
+    official test images serve as validation) and prints a validation accuracy, so it does
+    not reproduce the app's exact rows or its test accuracy;
+  - the AI Professor's review and the tutor's context describe the validation accuracy;
+  - the agent's tools rank experiments by validation accuracy (which is correct) but do not
+    quote the test accuracy in their comparison, and the remote-training log prints only
+    the validation accuracy.
+- **Small test sets are noisy.** Iris has 22 test rows; one flower is 4.5 points. There is
+  one split per seed and no cross-validation.
+- **Deliberately small models.** They train in seconds on a CPU; they are for teaching, not
+  for state-of-the-art accuracy. A CNN epoch on MNIST took about 13 s on the test laptop.
+- **Out-of-distribution images are guessed badly.** The bundled sneaker drawing is
+  predicted as a bag.
 - **The document check is an estimate.** An LLM judging another LLM can be wrong.
-- **gTTS needs internet access.** Ollama models answer in English only.
-- **One user per server.** Training runs inside that user's session. The app has no user accounts; run it locally or behind your own access control.
+- **gTTS needs internet access. Ollama models answer in English only.**
+- **One user per server.** Training runs inside the user's session; there are no accounts.
+- **`app.py` is one long file** (UI only, one function per tab).
 
 ---
 
 ## Troubleshooting
 
 - **"No Gemini API key found".** Create `.env` from `.env.example` and restart Streamlit.
-- **"All Gemini API keys have hit their rate limit".** Wait about a minute, or add more keys to `GEMINI_API_KEYS`.
-- **"The selected Gemini model is not available for this API key".** Pick another model under **AI model settings**.
-- **Ollama "server is not running".** Click **Start Ollama server**, or run `ollama serve` in a terminal and then click **Check Ollama again**.
-- **No audio for the review.** gTTS needs an internet connection.
-- **`pip install` fails with "No such file or directory … tensorflow\include\…" on Windows.** The folder path exceeds Windows' 260-character limit. Keep the project in a short path (for example `C:\dlt`), or enable long paths: <https://pip.pypa.io/warnings/enable-long-paths>.
-- **Code changes don't show up.** The file watcher is off (see *Run the app*). Restart Streamlit, or use `--server.fileWatcherType auto`.
+- **"All Gemini API keys have hit their rate limit".** Wait about a minute, or add more keys.
+- **Ollama "server is not running".** Click **Start Ollama server**, or run `ollama serve`.
+- **`pip install` fails with "No such file or directory … tensorflow\include\…" on Windows.**
+  The folder path exceeds 260 characters. Use a short path (for example `C:\dlt`).
+- **Code changes don't show up.** The file watcher is off for speed
+  (`.streamlit/config.toml`). Restart Streamlit, or run
+  `python -m streamlit run app.py --server.fileWatcherType auto`.
 
 ---
+
+## Project history
+
+This project began as an internship project. It was later audited and refactored with the
+help of an AI coding assistant: the audit found, among other things, a data leak (the scaler
+was fitted before the split) and a Grad-CAM that did not work under Keras 3; the refactor
+moved the logic out of the user interface into tested modules. In the private working
+repository that work is dated 2026-09-30 and 2026-10-01. The held-out test set and the
+per-class table were added for this release.
+
+The public history starts at this release, because the earlier working repository also
+held unrelated report material that cannot be published.
 
 ## License
 
