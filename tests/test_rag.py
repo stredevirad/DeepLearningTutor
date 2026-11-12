@@ -265,3 +265,53 @@ def test_vectors_are_stored_as_float32_and_ranking_is_unchanged():
         assert method == "cosine" and [c["id"] for _, c in got] == list(expected)
         got_array, _ = R.retrieve("anything", kb, tag, lambda _q, q=q: np.asarray(q, dtype=np.float32), k=3)
         assert [c["id"] for _, c in got_array] == list(expected)   # the question may arrive as an array as well
+
+
+# ─────────────────────────── our own recursive splitter ───────────────────────────
+
+def test_chunks_respect_the_size_limit_and_prefer_paragraph_borders():
+    paragraphs = [f"Paragraph {i}. " + "word " * 60 for i in range(12)]          # about 315 characters each
+    chunks = R.chunk_text("\n\n".join(paragraphs), chunk_size=1000, overlap=100)
+    assert all(len(c) <= 1000 for c in chunks) and len(chunks) > 3
+    assert all(c.startswith("Paragraph") for c in chunks)                         # cut between paragraphs only
+    assert "".join(c.replace("Paragraph", "#") for c in chunks).count("#") == 12   # nothing lost, nothing doubled
+
+
+def test_chunks_overlap_when_text_is_cut_between_words():
+    words = [f"w{i:04d}" for i in range(600)]                                     # one long line, no paragraphs
+    chunks = R.chunk_text(" ".join(words), chunk_size=200, overlap=40)
+    assert all(len(c) <= 200 for c in chunks)
+    for a, b in zip(chunks, chunks[1:]):
+        shared = set(a.split()) & set(b.split())
+        assert 1 <= len(shared) <= 7                                              # up to 40 characters of 6-character words
+        assert a.split()[-1] in shared                                            # the tail of one chunk opens the next
+    seen = [w for c in chunks for w in c.split()]
+    assert set(seen) == set(words) and seen[0] == "w0000" and seen[-1] == "w0599"
+
+
+def test_a_word_longer_than_a_chunk_is_cut_anywhere():
+    chunks = R.chunk_text("short start " + "x" * 2500 + " short end", chunk_size=1000, overlap=100)
+    assert all(len(c) <= 1000 for c in chunks)
+    assert "".join(chunks).count("x") >= 2500 and chunks[0].startswith("short start")
+
+
+def test_chunking_small_and_empty_texts():
+    assert R.chunk_text("") == [] and R.chunk_text("  \n\n  ") == []
+    assert R.chunk_text("One short note.") == ["One short note."]
+    assert R.chunk_text("First line.\nSecond line.", chunk_size=15, overlap=0) == ["First line.", "Second line."]
+
+
+def test_chunking_matches_recorded_library_output():
+    """Recorded from langchain-text-splitters 1.1.2 (RecursiveCharacterTextSplitter, chunk 60, overlap 15)
+    before that dependency was replaced by core.rag's own splitter."""
+    text = ("Deep learning uses layers of neurons.\n\nEach layer learns features. Early layers find edges; "
+            "later layers find shapes.\nTraining adjusts the weights with gradient descent.")
+    assert R.chunk_text(text, chunk_size=60, overlap=15) == RECORDED_CHUNKS
+
+
+RECORDED_CHUNKS = [
+    'Deep learning uses layers of neurons.',
+    'Each layer learns features. Early layers find edges; later',
+    'edges; later layers find shapes.',
+    'Training adjusts the weights with gradient descent.',
+]

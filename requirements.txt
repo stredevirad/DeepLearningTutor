@@ -10,7 +10,6 @@ Pillow==12.3.0
 google-genai==2.25.0
 python-dotenv==1.2.3
 pypdf==6.19.0
-langchain-text-splitters==1.1.2
 ollama==0.6.3
 gTTS==2.5.4
 httpx==0.28.1

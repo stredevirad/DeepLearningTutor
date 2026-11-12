@@ -118,8 +118,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | CI VERIFIED | 0d9fd7f | green |
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | CI VERIFIED | 9e7fdb8 | green |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | REVERTED | 1659a77 | green |
-| 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | DONE | see git log | pending |
-| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | NOT STARTED | | |
+| 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | CI VERIFIED | 191899a | green |
+| 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | DONE | see git log | pending |
 | 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | NOT STARTED | | |
 | 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | NOT STARTED | | |
 | 7.2 | MUST | S | Private guide and run summary (outside the repo) | NOT STARTED | | |
@@ -318,6 +318,29 @@ Item details (short form of the brief; the acceptance rules are binding):
   agent mode, the Malayalam answer (one JSON object), Ollama, the AI review, the fact-check.
   Files: backend/llm_api.py (generate_stream), backend/usage.py, app.py,
   benchmarks/run_benchmarks.py (fake), tests (llm_api, app smoke). Tests: 469 -> 473.
+- 6.1 (dependency check), measured in the project environment, fresh process, median of 5:
+
+  | What | Before | After |
+  |------|--------|-------|
+  | Lines in requirements.txt | 17 | 16 |
+  | Packages a fresh install pulls in (dependency closure) | 109 | 94 |
+  | Packages needed only by langchain-text-splitters | 15 | 0 |
+  | import langchain_text_splitters | 447 ms | not imported |
+  | First chunk_text call (import + split 250 KB) | 534 ms | 141 ms |
+  | Splitting 250 KB, warm | 32.5 ms (library) | 22.5 ms (ours) |
+
+  Both rules were met (at least 8 packages, at least 0.3 s on the first document upload), so
+  the one class used from the library was replaced by about 50 lines in core/rag.py (the same
+  recursive scheme: paragraphs, lines, words, characters; chunk 1,000, overlap 100). Before
+  the dependency was dropped, our splitter was compared with the library on 1,232 texts (the
+  study guide, edge cases and 300 random texts, four size/overlap settings): identical chunk
+  lists for all 1,232 (2.3 million chunks). One recorded library output stays in the tests.
+  The 15 packages: httpcore2, httpx2, jsonpatch, jsonpointer, langchain-core,
+  langchain-protocol, langchain-text-splitters, langsmith, orjson, pyyaml,
+  requests-toolbelt, truststore, uuid-utils, xxhash, zstandard.
+  matplotlib, same test: 6 packages only it needs and about 125 ms to import its colormaps.
+  Below both thresholds: KEPT, untouched.
+  Files: core/rag.py, requirements.txt, tests/test_rag.py. Tests: 473 -> 478.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -381,6 +404,9 @@ Item details (short form of the brief; the acceptance rules are binding):
   small tables behave exactly as before and their live charts update after every batch.
 - 5.1: MNIST results for a given seed change slightly (test 98.84 % -> 98.71 % in this run)
   because the batches are grouped differently. The README numbers are re-measured in 7.1.
+- 6.1: the dependency was removed from requirements.txt only. The packages were not
+  uninstalled from the local project environment (nothing imports them any more; CI installs
+  from requirements.txt, so CI is the proof that the app works without them).
 
 ## K. Real Gemini calls used
 
@@ -406,7 +432,7 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Start item 6.1: write the 3.5 commit hash and its CI result into table G. Measure the import
-time of langchain_text_splitters and count the packages only it needs (python -m pip show, no
-installs). Replace it with our own short recursive splitter only if that removes at least 8
-packages or 0.3 s from the first document upload and the chunk-level tests still pass.
+Start item 6.2: write the 6.1 commit hash and its CI result into table G. For every tracked
+file that is not code or a test, find what references it; list dead functions with search;
+remove only what has zero references, in one commit; prove tests + app start afterwards. In
+the run folder delete only the pip cache, the clone-check folder and temp contents.

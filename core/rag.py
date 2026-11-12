@@ -97,10 +97,67 @@ def extract_text(name, data, max_pages=MAX_PDF_PAGES, max_bytes=MAX_DOC_BYTES):
     return text, warnings
 
 
+# Where a text may be cut, best place first: between paragraphs, between lines, between
+# words and, if a single "word" is still too long, anywhere.
+SEPARATORS = ("\n\n", "\n", " ", "")
+
+
+def _pieces(text, separator):
+    """Cut `text` at every `separator`; each piece after the first keeps the separator in front."""
+    if separator == "":
+        return list(text)
+    parts = text.split(separator)
+    return [p for p in [parts[0]] + [separator + part for part in parts[1:]] if p]
+
+
+def _merge(pieces, chunk_size, overlap):
+    """Glue small pieces together into chunks of at most `chunk_size` characters. A new chunk
+    starts with the tail of the previous one (up to `overlap` characters), so a sentence
+    cut at a chunk border can still be found whole in one of the two."""
+    chunks, current, total = [], [], 0
+    for piece in pieces:
+        if total + len(piece) > chunk_size and current:
+            chunk = "".join(current).strip()
+            if chunk:
+                chunks.append(chunk)
+            # drop pieces from the front until only the overlap is left and the new piece fits
+            while total > overlap or (total + len(piece) > chunk_size and total > 0):
+                total -= len(current[0])
+                current = current[1:]
+        current.append(piece)
+        total += len(piece)
+    chunk = "".join(current).strip()
+    if chunk:
+        chunks.append(chunk)
+    return chunks
+
+
+def _split(text, separators, chunk_size, overlap):
+    """Recursive character splitting: cut at the first separator that occurs in the text,
+    merge the pieces that fit, and cut the pieces that are still too long with the next separator."""
+    separator, finer = separators[-1], ()
+    for i, candidate in enumerate(separators):
+        if candidate == "" or candidate in text:
+            separator, finer = candidate, separators[i + 1:]
+            break
+    chunks, small = [], []
+    for piece in _pieces(text, separator):
+        if len(piece) < chunk_size:
+            small.append(piece)
+            continue
+        if small:
+            chunks.extend(_merge(small, chunk_size, overlap))
+            small = []
+        chunks.extend(_split(piece, finer, chunk_size, overlap) if finer else [piece])
+    if small:
+        chunks.extend(_merge(small, chunk_size, overlap))
+    return chunks
+
+
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
-    return [c for c in splitter.split_text(text) if c.strip()]
+    """Split a document into overlapping chunks of at most `chunk_size` characters,
+    cutting between paragraphs where possible, then lines, then words."""
+    return [c for c in _split(text, SEPARATORS, chunk_size, overlap) if c.strip()]
 
 
 def content_hash(data):
