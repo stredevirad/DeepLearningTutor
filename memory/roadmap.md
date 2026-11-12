@@ -121,8 +121,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 3.5 | OPTIONAL | M | Streaming for the plain English tutor answer | CI VERIFIED | 191899a | green |
 | 6.1 | OPTIONAL | S | Dependency check (langchain-text-splitters) | CI VERIFIED | 6e7a73c | green |
 | 6.2 | OPTIONAL | S | Cleanup audit of unreferenced files and dead functions | CI VERIFIED | d7ce525 | green |
-| 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | DONE | see git log | pending |
-| 7.2 | MUST | S | Private guide and run summary (outside the repo) | NOT STARTED | | |
+| 7.1 | MUST | M | Final proof: tests, benchmarks, docs, README, clone check | CI VERIFIED | dcd06f4 | green |
+| 7.2 | MUST | S | Private guide and run summary (outside the repo) | DONE | outside the repo (no commit) | - |
 
 Item details (short form of the brief; the acceptance rules are binding):
 
@@ -457,6 +457,9 @@ Item details (short form of the brief; the acceptance rules are binding):
 - 6.1: the dependency was removed from requirements.txt only. The packages were not
   uninstalled from the local project environment (nothing imports them any more; CI installs
   from requirements.txt, so CI is the proof that the app works without them).
+- 7.2: the private guide, its HTML and the run summary were updated outside the repository.
+  This closing commit only records the 7.1 commit and its CI result; its own CI result is the
+  one thing this log cannot hold (check the Actions page or `gh run list -L 1`).
 
 ## K. Real Gemini calls used
 
@@ -483,6 +486,7 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Item 7.2 is outside the repository (the private guide, its HTML and the run summary) and
-leaves no commit here. After it, the pass is finished: write the 7.1 commit hash and its CI
-result into table G in a last roadmap-only commit, and mark 7.2 DONE there.
+The pass is finished: every item has a status, a commit and its numbers above. Nothing is
+in progress. Possible next work, none of it started: cross-validation for the small tables;
+the four small known defects in section F (test first); the 768-number embeddings checked on
+a long document; splitting app.py per tab.
