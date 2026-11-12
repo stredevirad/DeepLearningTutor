@@ -96,7 +96,7 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | # | Severity | Hypothesis | Result |
 |---|----------|------------|--------|
 | 1 | P2 | chat_helpers.fact_check asks the selected model again after ANY LLMError, also after "all keys rate-limited" / "no key", which repeats a full round of retries and waits | Reproduced by a failing test. FIXED in 4.1a |
-| 2 | P2 | app.py answer(): when the reply fails, the question stays in the chat history with no answer; after the next rerun the error is gone, and the unanswered question is sent to the model as history | To be tested in 4.1b |
+| 2 | P2 | app.py answer(): when the reply fails, the question stays in the chat history with no answer; after the next rerun the error is gone, and the unanswered question is sent to the model as history | Reproduced by a failing app test. FIXED in 4.1b |
 | 3 | P2 | core/data.py ZIP loader: a password-protected ZIP passes the summary and then fails at Train with a raw RuntimeError instead of a friendly DataError | Reproduced by a probe. To be fixed in 4.1c |
 | 4 | P3 | ZIP loader: a ZIP with the same member name stored several times loads that image several times (15 images from 12 files in the probe), so copies can land in both training and test | Reproduced by a probe. NOT FIXED (fix budget used) |
 | 5 | P3 | llm_api.embed_texts checks only the number of vectors: an embedding whose values are None raises a raw TypeError instead of an LLMError. The order of the vectors is trusted | Reproduced with a fake (TypeError). Not seen from the real API. NOT FIXED |
@@ -113,8 +113,8 @@ test or a probe script showed the behaviour; only three are fixed, as the item a
 | 2.1 | MUST | M | Exported script uses the app's three-way split | CI VERIFIED | 3fecf64 | green |
 | 2.2 | MUST | M | Test accuracy in AI review, tutor status, agent tools, MCP | CI VERIFIED | d866512 | green |
 | 3.1 | MUST | M | API usage meter (backend/usage.py + sidebar expander) | CI VERIFIED | e6f67b0 | green |
-| 3.2 | MUST | S | Request timeout on the Gemini client | DONE | d2bc89e | running when checked |
-| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | IN PROGRESS | 4.1a: see git log | pending |
+| 3.2 | MUST | S | Request timeout on the Gemini client | CI VERIFIED | d2bc89e | green |
+| 4.1 | MUST | M | Bug hunt, time-boxed; at most three fixes (4.1a-c) | IN PROGRESS | 4.1a 0caebba; 4.1b: see git log | pending |
 | 3.3 | SHOULD | M | Embedding memory: float32 arrays, maybe smaller dimension | NOT STARTED | | |
 | 5.1 | SHOULD | M | CNN speed: explain the gap, try cheap levers | NOT STARTED | | |
 | 3.4 | OPTIONAL | M | Prompt structure: system_instruction, stable-first order | NOT STARTED | | |
@@ -226,6 +226,12 @@ Item details (short form of the brief; the acceptance rules are binding):
   generate_text calls (fast model, then selected model), each with its own retries and waits.
   After: one. Shown by tests/test_chat_helpers.py with a fake; no real call. Files:
   components/chat_helpers.py, tests/test_chat_helpers.py. Tests: 462 -> 463.
+- 4.1b (unanswered question). Before: a failed reply left the question in the chat history;
+  after the next rerun the error box was gone and the question was sent to the model as
+  history. After: the question is marked "unanswered", shows a caption saying so (both
+  languages) and is left out of the history sent to the model. Shown by a failing-then-passing
+  app test with a fake Gemini; no real call. Files: app.py, config/translations.py,
+  tests/test_app_smoke.py. Tests: 463 -> 464.
 
 ## I. Ideas evaluated and rejected (no code written)
 
@@ -295,6 +301,6 @@ Item details (short form of the brief; the acceptance rules are binding):
 
 ## M. Exact next action
 
-Continue item 4.1 with 4.1b: write the 4.1a commit hash into table G. Write a failing app test
-for hypothesis 2 (a failed tutor reply leaves an unanswered question in the history), fix it in
-app.py with the smallest change, commit. Then 4.1c: hypothesis 3 (password-protected ZIP).
+Finish item 4.1 with 4.1c: write the 4.1b commit hash into table G. Failing test for
+hypothesis 3 (a password-protected ZIP must give a friendly DataError, also in zip_summary),
+fix in core/data.py, commit, then mark 4.1 DONE and go on to item 3.3.

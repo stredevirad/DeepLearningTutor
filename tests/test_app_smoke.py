@@ -71,9 +71,12 @@ class FakeGemini:
         self.agent_calls = list(agent_calls or [])
         self.prompts = []
         self.text_prompts = []
+        self.fail_with = None                    # set to an exception to make the next chat calls fail
 
     def generate(self, contents, model_id=None, config=None, **kw):
         self.prompts.append((contents, config))
+        if self.fail_with is not None:
+            raise self.fail_with
         if config is not None and config.tools and self.agent_calls:
             name, args = self.agent_calls.pop(0)
             parts = [types.Part(function_call=types.FunctionCall(name=name, args=args))]
@@ -452,6 +455,26 @@ def test_chat_history_is_not_duplicated(gemini):
     assert "first question about dropout" in history and "second question" not in history
     assert prompt.count("second question about pooling") == 1
     assert at.session_state["chat_upload_nonce"] == 2          # attachments are cleared after each message
+
+
+def test_failed_reply_is_marked_and_kept_out_of_the_history(gemini):
+    at = new_app()
+    open_tab(at, TUTOR)
+    gemini.fail_with = llm_api.LLMError("Gemini is temporarily unavailable. Please try again in a moment.")
+    at.chat_input[0].set_value("first question about dropout").run(timeout=TIMEOUT)
+    assert "temporarily unavailable" in texts(at.error)
+    messages = at.session_state["chat_messages"]
+    assert len(messages) == 1 and messages[0].get("unanswered") is True
+
+    gemini.fail_with = None
+    at.chat_input[0].set_value("second question about pooling").run(timeout=TIMEOUT)
+    no_errors(at)                                              # the error box is gone after the rerun ...
+    assert "This question was not answered" in texts(at.caption)   # ... but the question still says what happened
+    prompt = gemini.last_prompt_text()
+    assert "first question about dropout" not in prompt        # an unanswered question is not sent as history
+    assert "--- CONVERSATION HISTORY ---" not in prompt
+    messages = at.session_state["chat_messages"]
+    assert [m["role"] for m in messages] == ["user", "user", "assistant"] and not messages[1].get("unanswered")
 
 
 def test_tutor_malayalam_bilingual_reply(gemini):

@@ -995,7 +995,9 @@ def project_status():
 def answer(prompt, attachments, chat_container):
     """Build the context, call the active backend and render + store the reply."""
     images, image_bytes, attached_text, names = read_attachments(attachments)
-    previous = list(ss.chat_messages)           # history BEFORE this question (it is sent separately below)
+    # History BEFORE this question (it is sent separately below). Questions that never got a
+    # reply (the request failed) are left out: the model should not see them as open questions.
+    previous = [m for m in ss.chat_messages if not m.get("unanswered")]
     entry = {"role": "user", "content": {"en": prompt, "ml": prompt}}
     if image_bytes:
         entry["images"] = image_bytes
@@ -1090,6 +1092,9 @@ def answer(prompt, attachments, chat_container):
                     except Exception:
                         logger.exception("Gemini chat failed")
                         st.error(T("gemini_failed"))
+
+    if ss.chat_messages and ss.chat_messages[-1] is entry:
+        entry["unanswered"] = True              # no reply was stored: the request failed or came back empty
 
 
 def run_agent_turn(full_prompt, images, save_and_render, check):
@@ -1196,6 +1201,8 @@ def render_tutor_tab():
         for message in ss.chat_messages:
             with st.chat_message(message["role"]):
                 render_response(message["content"].get(l, message["content"].get("en", "")))
+                if message.get("unanswered"):
+                    st.caption(T("chat_unanswered"))
                 for img_data in message.get("images", []):
                     st.image(img_data, width=150)
                 for fn in message.get("file_names", []):
